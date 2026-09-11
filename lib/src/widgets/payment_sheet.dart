@@ -10,7 +10,7 @@ import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
 import '../wajub_session.dart';
 
-enum _PaymentTab { mobileMoney, card }
+enum _PaymentTab { mobileMoney, card, wallet }
 
 const _hostedCardFieldLabels = {
   'first_name': 'First name',
@@ -105,6 +105,9 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
         (c) => c.type.toLowerCase() == 'mobile_money' || c.type.toLowerCase() == 'mobile',
       );
       final hasCard = session.channels.any((c) => c.type.toLowerCase() == 'card');
+      final hasWallet = session.channels.any(
+        (c) => PaymentMapper.isRedirectWalletChannel(c, sdkConfig.channels[c.slug]),
+      );
       setState(() {
         _session = session;
         _sdkConfig = sdkConfig;
@@ -112,6 +115,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
         _selectedMomo = momo.isNotEmpty ? momo.first : null;
         _country = _selectedMomo?.countries.firstOrNull ?? 'CM';
         if (momo.isEmpty && hasCard) _tab = _PaymentTab.card;
+        if (momo.isEmpty && !hasCard && hasWallet) _tab = _PaymentTab.wallet;
       });
     } on WajubError catch (e) {
       setState(() {
@@ -146,6 +150,25 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
           country: _country,
         ),
       );
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      await _finish(result);
+    } on WajubError catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = e;
+      });
+    }
+  }
+
+  Future<void> _payWallet(SessionChannel channel) async {
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.session.payWallet(channelSlug: channel.slug);
       if (!mounted) return;
       setState(() => _submitting = false);
       await _finish(result);
@@ -396,6 +419,15 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
         ).toList() ??
         [];
     final hasCard = _session?.channels.any((c) => c.type.toLowerCase() == 'card') ?? false;
+    final walletChannels = _session?.channels
+            .where((c) => PaymentMapper.isRedirectWalletChannel(c, _sdkConfig?.channels[c.slug]))
+            .toList() ??
+        [];
+    final tabs = [
+      if (momoChannels.isNotEmpty) _PaymentTab.mobileMoney,
+      if (hasCard) _PaymentTab.card,
+      if (walletChannels.isNotEmpty) _PaymentTab.wallet,
+    ];
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -414,11 +446,18 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                   IconButton(onPressed: widget.onDismiss, icon: const Icon(Icons.close)),
                 ],
               ),
-              if (momoChannels.isNotEmpty && hasCard) ...[
+              if (tabs.length > 1) ...[
                 SegmentedButton<_PaymentTab>(
-                  segments: const [
-                    ButtonSegment(value: _PaymentTab.mobileMoney, label: Text('Mobile Money')),
-                    ButtonSegment(value: _PaymentTab.card, label: Text('Card')),
+                  segments: [
+                    for (final tab in tabs)
+                      ButtonSegment(
+                        value: tab,
+                        label: Text(switch (tab) {
+                          _PaymentTab.mobileMoney => 'Mobile Money',
+                          _PaymentTab.card => 'Card',
+                          _PaymentTab.wallet => 'Wallet',
+                        }),
+                      ),
                   ],
                   selected: {_tab},
                   onSelectionChanged: (s) => setState(() => _tab = s.first),
@@ -439,7 +478,17 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                   Text(_error!.message, style: TextStyle(color: Theme.of(context).colorScheme.error)),
                   const SizedBox(height: 12),
                 ],
-                if (_tab == _PaymentTab.mobileMoney) ...[
+                if (_tab == _PaymentTab.wallet) ...[
+                  const Text('You will approve the payment in the wallet app.'),
+                  const SizedBox(height: 12),
+                  for (final ch in walletChannels) ...[
+                    FilledButton(
+                      onPressed: _submitting ? null : () => _payWallet(ch),
+                      child: Text(_submitting ? 'Processing…' : 'Pay with ${ch.name}'),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ] else if (_tab == _PaymentTab.mobileMoney) ...[
                 if (momoChannels.isEmpty)
                   const Text('No Mobile Money channels available.')
                 else ...[

@@ -62,6 +62,14 @@ class WajubSession {
     );
   }
 
+  /// One-tap wallet channel (sdk-config `form`, no `requiredFields`, channel
+  /// type `wallet` — e.g. Djamo): returns [PaymentRequiresAction] redirecting
+  /// to the wallet's payment page, which opens the wallet app.
+  Future<PaymentResult> payWallet({required String channelSlug}) async {
+    await loadSession();
+    return process(channelSlug, const {});
+  }
+
   Future<PaymentResult> process(String channel, Map<String, dynamic> data) async {
     final raw = await _client.process(_token, channel, data);
     return PaymentMapper.mapProcessResponse(raw, _methodType(channel));
@@ -154,6 +162,7 @@ class WajubSession {
     return switch (match?.type.toLowerCase()) {
       'mobile_money' || 'mobile' => 'mobile_money',
       'card' => 'card',
+      'wallet' => 'wallet',
       _ => 'unknown',
     };
   }

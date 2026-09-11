@@ -156,6 +156,37 @@ void main() {
     });
   });
 
+  group('one-tap wallet channels (e.g. Djamo)', () {
+    const djamo = SessionChannel(id: 'd', slug: 'ci.djamo', name: 'Djamo CI', type: 'wallet', currency: 'XOF');
+    const form = SdkChannelConfig(available: true, provider: 'djamo', sdk: SdkFlavor.form);
+
+    test('accepts a form wallet with nothing to collect, and nothing else', () {
+      expect(PaymentMapper.isRedirectWalletChannel(djamo, form), isTrue);
+      expect(
+        PaymentMapper.isRedirectWalletChannel(
+          djamo,
+          const SdkChannelConfig(available: true, sdk: SdkFlavor.stripeElements),
+        ),
+        isFalse,
+      );
+      expect(
+        PaymentMapper.isRedirectWalletChannel(
+          djamo,
+          const SdkChannelConfig(available: true, sdk: SdkFlavor.form, requiredFields: ['phone']),
+        ),
+        isFalse,
+      );
+      expect(
+        PaymentMapper.isRedirectWalletChannel(
+          const SessionChannel(id: 'm', slug: 'ci.orange', name: 'Orange', type: 'mobile_money', currency: 'XOF'),
+          form,
+        ),
+        isFalse,
+      );
+      expect(PaymentMapper.isRedirectWalletChannel(djamo, null), isFalse);
+    });
+  });
+
   group('StripeAdapter', () {
     test('builds stripe card payload', () {
       final data = buildStripeCardRequest(paymentMethodId: 'pm_test', cardholderName: 'Jane');

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- One-tap wallet channels (channel `type: wallet`, sdk-config `form` with no `requiredFields` —
+  e.g. Djamo `ci.djamo` / `sn.djamo`): `WajubSession.payWallet(channelSlug:)` and
+  `PaymentMapper.isRedirectWalletChannel`; `PaymentSheet` shows them in a new "Wallet" tab.
+
 ## 1.3.0
 
 - `hosted_redirect` cards now cover Kkiapay, FedaPay, PayDunya and CinetPay too:

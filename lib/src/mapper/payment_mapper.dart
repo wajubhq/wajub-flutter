@@ -48,6 +48,17 @@ class PaymentMapper {
   /// (`confirm_otp`, `confirm_pin`, `card_reauth`, …) — see spec/README.md.
   static const unsupportedActionCode = 'unsupported_action';
 
+  /// A `wallet` channel payable with a single tap — nothing to collect,
+  /// `/pay/process` answers with a redirect to the wallet's own page/app
+  /// (e.g. Djamo). Apple Pay / Google Pay / PayPal-via-Stripe need their own
+  /// SDK flavor and are excluded by `sdk: form` + no `requiredFields`.
+  static bool isRedirectWalletChannel(SessionChannel channel, SdkChannelConfig? config) =>
+      channel.type.toLowerCase() == 'wallet' &&
+      config != null &&
+      config.available &&
+      config.sdk == SdkFlavor.form &&
+      config.requiredFields.isEmpty;
+
   /// Contact/billing fields a `hosted_redirect` card PSP may still need
   /// before it opens its page — sdk-config lists the missing ones in
   /// `required_fields` (Kkiapay/FedaPay/PayDunya: `email`; CinetPay:

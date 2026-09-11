@@ -131,4 +131,41 @@ void main() {
     });
     expect(result, isA<PaymentRequiresAction>());
   });
+
+  test('WajubSession.payWallet submits the channel with empty data and maps the wallet redirect', () async {
+    final requests = <http.Request>[];
+    const txn = {'id': 'trx.test', 'reference': 'trx.test', 'amount': 10000, 'currency': 'XOF', 'status': 'processing'};
+    final session = WajubSession(
+      'tok',
+      client: PayClient(
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          final isSession = request.url.path.endsWith('/pay/session');
+          final body = isSession
+              ? {
+                  'transaction': txn,
+                  'channels': [
+                    {'id': 'd', 'slug': 'ci.djamo', 'name': 'Djamo CI', 'type': 'wallet', 'countries': ['CI'], 'currency': 'XOF'},
+                  ],
+                }
+              : {
+                  'code': 202,
+                  'status': 'Accepted',
+                  'message': 'ok',
+                  'action': 'redirect',
+                  'confirm_url': 'https://djamo.ci/?type=payment_confirmation',
+                  'transaction': txn,
+                };
+          return http.Response(jsonEncode(body), isSession ? 200 : 202, headers: {'content-type': 'application/json'});
+        }),
+      ),
+    );
+
+    final result = await session.payWallet(channelSlug: 'ci.djamo');
+
+    final process = requests.firstWhere((r) => r.url.path.endsWith('/pay/process'));
+    expect(jsonDecode(process.body), {'channel': 'ci.djamo', 'data': <String, dynamic>{}});
+    expect(result, isA<PaymentRequiresAction>());
+    expect((result as PaymentRequiresAction).actionUrl, 'https://djamo.ci/?type=payment_confirmation');
+  });
 }
