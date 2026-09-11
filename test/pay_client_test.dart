@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:wajub_mobile/src/client/pay_client.dart';
+import 'package:wajub_mobile/src/models/payment_result.dart';
 import 'package:wajub_mobile/src/models/wajub_error.dart';
+import 'package:wajub_mobile/src/wajub_session.dart';
 
 void main() {
   group('PayClient client sessions', () {
@@ -86,5 +88,47 @@ void main() {
             .having((e) => e.message, 'message', 'Paystack requires an email on every charge.')),
       );
     });
+  });
+
+  test('WajubSession.payCardHostedRedirect sends the billing fields flat and maps the PSP redirect', () async {
+    final requests = <http.Request>[];
+    const txn = {'id': 'trx.test', 'reference': 'trx.test', 'amount': 1000, 'currency': 'XOF', 'status': 'processing'};
+    final session = WajubSession(
+      'tok',
+      client: PayClient(
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          final isSession = request.url.path.endsWith('/pay/session');
+          final body = isSession
+              ? {
+                  'transaction': txn,
+                  'channels': [
+                    {'id': 'c', 'slug': 'card', 'name': 'Card', 'type': 'card', 'countries': <String>[], 'currency': 'XOF'},
+                  ],
+                }
+              : {
+                  'code': 202,
+                  'status': 'Accepted',
+                  'message': 'ok',
+                  'action': 'redirect',
+                  'confirm_url': 'https://checkout.cinetpay.com/payment/abc',
+                  'transaction': txn,
+                };
+          return http.Response(jsonEncode(body), isSession ? 200 : 202, headers: {'content-type': 'application/json'});
+        }),
+      ),
+    );
+
+    final result = await session.payCardHostedRedirect(
+      channelSlug: 'card',
+      billing: {'email': 'payer@example.test', 'zip_code': '00225'},
+    );
+
+    final process = requests.firstWhere((r) => r.url.path.endsWith('/pay/process'));
+    expect(jsonDecode(process.body), {
+      'channel': 'card',
+      'data': {'email': 'payer@example.test', 'zip_code': '00225'},
+    });
+    expect(result, isA<PaymentRequiresAction>());
   });
 }

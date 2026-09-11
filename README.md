@@ -82,9 +82,9 @@ await showWajubPaymentSheet(
 |--------|---------|
 | Mobile Money (`form`) | Native sheet |
 | Card (`stripe_elements`) | Native Stripe `CardField` |
-| Card via Paystack / Flutterwave (`client_session: true`) | PSP-hosted checkout in the system browser |
-| Card (`hosted_redirect` — PayPal, Mollie, Paddle) | System browser via `url_launcher` |
-| Card (`adyen_custom_card`) | Not supported (shown as unavailable) |
+| Card via Paystack / Flutterwave / Adyen Pay by Link (`client_session: true`) | PSP-hosted checkout in the system browser |
+| Card (`hosted_redirect` — PayPal, Mollie, Paddle, Kkiapay, FedaPay, PayDunya, CinetPay) | System browser via `url_launcher`, after collecting the sdk-config `requiredFields` (e.g. email, CinetPay billing) — `payCardHostedRedirect(channelSlug:, billing:)` |
+| Card (`adyen_custom_card`) | Web only — Adyen cards use `client_session` on mobile |
 | Redirect / hosted | System browser via `url_launcher` |
 | Realtime | Pusher/Reverb + polling fallback |
 

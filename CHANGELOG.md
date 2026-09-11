@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0
+
+- `hosted_redirect` cards now cover Kkiapay, FedaPay, PayDunya and CinetPay too:
+  `payCardHostedRedirect(channelSlug:, billing:)` sends the contact/billing fields the channel's
+  `requiredFields` lists (`PaymentMapper.hostedCardFields` — email, or CinetPay's name/phone/
+  address/city/country/zip), and `PaymentSheet` asks the payer for them before redirecting.
+- Adyen cards go through the client-session flow (Pay by Link) — no SDK change needed, the
+  backend now flags them `clientSession: true`.
+
 ## 1.2.0
 
 - Card via Paystack / Flutterwave: `WajubSession.startClientSession` / `completeClientSession`

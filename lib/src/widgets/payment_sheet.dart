@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../action_handler.dart';
+import '../mapper/payment_mapper.dart';
 import '../models/models.dart';
 import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
@@ -11,12 +12,26 @@ import '../wajub_session.dart';
 
 enum _PaymentTab { mobileMoney, card }
 
+const _hostedCardFieldLabels = {
+  'first_name': 'First name',
+  'last_name': 'Last name',
+  'email': 'Email',
+  'phone': 'Phone number',
+  'address': 'Address',
+  'city': 'City',
+  'country': 'Country (2-letter code, e.g. CI)',
+  'state': 'State / region',
+  'zip_code': 'Postal code',
+};
+
 /// Native payment sheet — Mobile Money + card, no WebView.
 ///
 /// Card tab by sdk-config flavor: `clientSession` (Paystack / Flutterwave —
 /// the PSP's hosted checkout in the system browser), `stripe_elements`
-/// (native Stripe field), `hosted_redirect` (PayPal / Mollie / Paddle).
-/// `adyen_custom_card` is shown as unavailable.
+/// (native Stripe field), `hosted_redirect` (PayPal / Mollie / Paddle /
+/// Kkiapay / FedaPay / PayDunya / CinetPay — plus whatever contact/billing
+/// fields sdk-config still requires). Adyen cards come through
+/// `clientSession` (Pay by Link).
 class PaymentSheet extends StatefulWidget {
   const PaymentSheet({
     super.key,
@@ -43,6 +58,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
   final _phoneController = TextEditingController();
   final _holderController = TextEditingController();
   final _emailController = TextEditingController();
+  final Map<String, TextEditingController> _billingControllers = {};
   Completer<void>? _resumeCompleter;
   bool _leftForeground = false;
   String _country = 'CM';
@@ -242,15 +258,31 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
     }
   }
 
-  /// PayPal / Mollie / Paddle: the PSP's own page collects the card.
+  /// sdk-config `requiredFields` a hosted-redirect PSP can ask the payer for.
+  List<String> _redirectFields(SdkChannelConfig? cfg) => (cfg?.requiredFields ?? const [])
+      .where(PaymentMapper.hostedCardFields.contains)
+      .toList();
+
+  TextEditingController _billingController(String field) =>
+      _billingControllers.putIfAbsent(field, TextEditingController.new);
+
+  /// The PSP's own page collects the card (PayPal, Mollie, Paddle, Kkiapay,
+  /// FedaPay, PayDunya, CinetPay).
   Future<void> _payCardHostedRedirect() async {
     final cardSlug = widget.session.cardChannelSlug() ?? 'card';
+    final billing = {
+      for (final field in _redirectFields(_cardConfig()))
+        field: _billingController(field).text,
+    };
     setState(() {
       _submitting = true;
       _error = null;
     });
     try {
-      final result = await widget.session.payCardHostedRedirect(channelSlug: cardSlug);
+      final result = await widget.session.payCardHostedRedirect(
+        channelSlug: cardSlug,
+        billing: billing,
+      );
       if (!mounted) return;
       setState(() => _submitting = false);
       await _finish(result);
@@ -271,6 +303,9 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
     _phoneController.dispose();
     _holderController.dispose();
     _emailController.dispose();
+    for (final controller in _billingControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -316,9 +351,39 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
       );
     }
     if (cfg?.sdk == SdkFlavor.hostedRedirect) {
-      return FilledButton(
-        onPressed: _submitting ? null : _payCardHostedRedirect,
-        child: Text(_submitting ? 'Processing…' : 'Pay by card'),
+      final fields = _redirectFields(cfg);
+      final valid = fields.every((f) =>
+          PaymentMapper.hostedCardFieldError(f, _billingController(f).text) == null);
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final field in fields) ...[
+            TextField(
+              key: ValueKey('hosted-card-$field'),
+              controller: _billingController(field),
+              keyboardType: field == 'email'
+                  ? TextInputType.emailAddress
+                  : field == 'phone'
+                      ? TextInputType.phone
+                      : TextInputType.text,
+              textCapitalization: field == 'country'
+                  ? TextCapitalization.characters
+                  : TextCapitalization.none,
+              maxLength: field == 'country' ? 2 : null,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: _hostedCardFieldLabels[field],
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          FilledButton(
+            onPressed: _submitting || !valid ? null : _payCardHostedRedirect,
+            child: Text(_submitting ? 'Processing…' : 'Pay by card'),
+          ),
+        ],
       );
     }
     return const Text('Card payments unavailable for this session.');

@@ -137,6 +137,25 @@ void main() {
     });
   });
 
+  group('hosted-redirect billing fields (sdk-config required_fields)', () {
+    test('validates required, email and 2-letter country values', () {
+      expect(PaymentMapper.hostedCardFieldError('city', '  '), 'Required');
+      expect(PaymentMapper.hostedCardFieldError('email', 'nope'), 'Invalid email');
+      expect(PaymentMapper.hostedCardFieldError('email', 'payer@example.test'), isNull);
+      expect(PaymentMapper.hostedCardFieldError('country', 'CIV'), 'Use the 2-letter country code');
+      expect(PaymentMapper.hostedCardFieldError('country', 'ci'), isNull);
+    });
+
+    test('builds flat data, trimming, upper-casing the country and dropping blanks and unknown keys', () {
+      expect(
+        PaymentMapper.buildHostedCardRequest(
+          {'email': ' payer@example.test ', 'country': 'ci', 'city': '', 'card.number': '4242'},
+        ),
+        {'email': 'payer@example.test', 'country': 'CI'},
+      );
+    });
+  });
+
   group('StripeAdapter', () {
     test('builds stripe card payload', () {
       final data = buildStripeCardRequest(paymentMethodId: 'pm_test', cardholderName: 'Jane');

@@ -48,6 +48,47 @@ class PaymentMapper {
   /// (`confirm_otp`, `confirm_pin`, `card_reauth`, …) — see spec/README.md.
   static const unsupportedActionCode = 'unsupported_action';
 
+  /// Contact/billing fields a `hosted_redirect` card PSP may still need
+  /// before it opens its page — sdk-config lists the missing ones in
+  /// `required_fields` (Kkiapay/FedaPay/PayDunya: `email`; CinetPay:
+  /// `first_name` … `zip_code`).
+  static const hostedCardFields = [
+    'first_name',
+    'last_name',
+    'email',
+    'phone',
+    'address',
+    'city',
+    'country',
+    'state',
+    'zip_code',
+  ];
+
+  /// Why a hosted-redirect billing value can't be sent yet, or null.
+  static String? hostedCardFieldError(String field, String? value) {
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return 'Required';
+    if (field == 'email' && !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v)) {
+      return 'Invalid email';
+    }
+    // CinetPay's customer_country is a 2-letter ISO code.
+    if (field == 'country' && !RegExp(r'^[A-Za-z]{2}$').hasMatch(v)) {
+      return 'Use the 2-letter country code';
+    }
+    return null;
+  }
+
+  /// `data` for a hosted-redirect card charge — flat keys, as sdk-config
+  /// names them.
+  static Map<String, dynamic> buildHostedCardRequest(Map<String, String> billing) {
+    final data = <String, dynamic>{};
+    for (final field in hostedCardFields) {
+      final v = (billing[field] ?? '').trim();
+      if (v.isNotEmpty) data[field] = field == 'country' ? v.toUpperCase() : v;
+    }
+    return data;
+  }
+
   static Map<String, dynamic> buildMobileMoneyRequest(MobileMoneyInput input) => {
         'phone': input.phone,
         'country': input.country.toUpperCase(),

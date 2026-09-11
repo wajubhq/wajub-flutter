@@ -67,11 +67,17 @@ class WajubSession {
     return PaymentMapper.mapProcessResponse(raw, _methodType(channel));
   }
 
-  /// sdk-config `hosted_redirect` (PayPal, Mollie, Paddle): the PSP's own page
-  /// collects the card — submit with no card data, then open the redirect.
-  Future<PaymentResult> payCardHostedRedirect({required String channelSlug}) async {
+  /// sdk-config `hosted_redirect` (PayPal, Mollie, Paddle, Kkiapay, FedaPay,
+  /// PayDunya, CinetPay): the PSP's own page collects the card — submit no
+  /// card data, then open the redirect. [billing] must carry every field the
+  /// channel's `requiredFields` lists (see [PaymentMapper.hostedCardFields]).
+  Future<PaymentResult> payCardHostedRedirect({
+    required String channelSlug,
+    Map<String, String> billing = const {},
+  }) async {
     await loadSession();
-    final raw = await _client.process(_token, channelSlug, const {});
+    final data = PaymentMapper.buildHostedCardRequest(billing);
+    final raw = await _client.process(_token, channelSlug, data);
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
 
