@@ -11,7 +11,12 @@ import '../wajub_session.dart';
 
 enum _PaymentTab { mobileMoney, card }
 
-/// Native payment sheet — Mobile Money + Stripe card, no WebView.
+/// Native payment sheet — Mobile Money + card, no WebView.
+///
+/// Card tab by sdk-config flavor: `clientSession` (Paystack / Flutterwave —
+/// the PSP's hosted checkout in the system browser), `stripe_elements`
+/// (native Stripe field), `hosted_redirect` (PayPal / Mollie / Paddle).
+/// `adyen_custom_card` is shown as unavailable.
 class PaymentSheet extends StatefulWidget {
   const PaymentSheet({
     super.key,
@@ -28,7 +33,7 @@ class PaymentSheet extends StatefulWidget {
   State<PaymentSheet> createState() => _PaymentSheetState();
 }
 
-class _PaymentSheetState extends State<PaymentSheet> {
+class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver {
   SessionData? _session;
   SdkConfig? _sdkConfig;
   bool _loading = true;
@@ -37,6 +42,9 @@ class _PaymentSheetState extends State<PaymentSheet> {
   SessionChannel? _selectedMomo;
   final _phoneController = TextEditingController();
   final _holderController = TextEditingController();
+  final _emailController = TextEditingController();
+  Completer<void>? _resumeCompleter;
+  bool _leftForeground = false;
   String _country = 'CM';
   _PaymentTab _tab = _PaymentTab.mobileMoney;
   bool _cardComplete = false;
@@ -44,7 +52,33 @@ class _PaymentSheetState extends State<PaymentSheet> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  /// Completes [_resumeCompleter] the first time the app comes back to the
+  /// foreground AFTER having left it (the PSP page opened in the browser).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final completer = _resumeCompleter;
+    if (completer == null || completer.isCompleted) return;
+    if (state == AppLifecycleState.resumed) {
+      if (_leftForeground) completer.complete();
+    } else {
+      _leftForeground = true;
+    }
+  }
+
+  Future<void> _waitForAppResume() {
+    _leftForeground = false;
+    final completer = Completer<void>();
+    _resumeCompleter = completer;
+    return completer.future;
+  }
+
+  SdkChannelConfig? _cardConfig() {
+    final cardSlug = widget.session.cardChannelSlug() ?? 'card';
+    return _sdkConfig?.channels[cardSlug];
   }
 
   Future<void> _load() async {
@@ -111,7 +145,7 @@ class _PaymentSheetState extends State<PaymentSheet> {
   Future<void> _payCard() async {
     final cardSlug = widget.session.cardChannelSlug() ?? 'card';
     final cardCfg = _sdkConfig?.channels[cardSlug];
-    if (cardCfg?.sdk != 'stripe_elements' || cardCfg?.publishableKey == null) {
+    if (cardCfg?.sdk != SdkFlavor.stripeElements || cardCfg?.publishableKey == null) {
       setState(() => _error = const WajubError(
             type: WajubErrorType.paymentError,
             message: 'Card payments unavailable for this session',
@@ -141,11 +175,153 @@ class _PaymentSheetState extends State<PaymentSheet> {
     }
   }
 
+  /// Paystack / Flutterwave: open the PSP's hosted checkout in the system
+  /// browser, wait for the payer to come back, then verify server-side.
+  Future<void> _payCardClientSession() async {
+    final cardSlug = widget.session.cardChannelSlug() ?? 'card';
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    PaymentRequiresAction? started;
+    try {
+      final email = _emailController.text.trim();
+      final result = await widget.session.startClientSession(
+        channelSlug: cardSlug,
+        email: email.isEmpty ? null : email,
+      );
+      if (!mounted) return;
+      if (result is! PaymentRequiresAction ||
+          result.action != ActionKind.clientSession ||
+          result.clientSession == null) {
+        setState(() => _submitting = false);
+        await _finish(result);
+        return;
+      }
+      started = result;
+
+      final resumed = _waitForAppResume();
+      final opened = await widget.session.handleRedirectAction(result);
+      if (!opened) {
+        _resumeCompleter = null;
+        if (!mounted) return;
+        setState(() {
+          _submitting = false;
+          _error = const WajubError(
+            type: WajubErrorType.apiError,
+            message: 'Could not open the payment page.',
+            code: 'redirect_failed',
+          );
+        });
+        return;
+      }
+      await resumed;
+      if (!mounted) return;
+
+      final completed = await widget.session.completeClientSession(result.clientSession!.id);
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      await _finish(completed);
+    } on WajubError catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      final transaction = started?.transaction;
+      if (transaction != null) {
+        // The payer went through the PSP's page, so end the sheet instead of
+        // offering a retry. Only a 402 (declineCode set) is a verified
+        // decline; anything else (network, expired session) may still be
+        // settled by the PSP webhook → processing, keep watching the status.
+        await _finish(
+          e.declineCode != null
+              ? PaymentFailed(error: e, transaction: transaction)
+              : PaymentProcessing(transaction),
+        );
+        return;
+      }
+      setState(() => _error = e);
+    }
+  }
+
+  /// PayPal / Mollie / Paddle: the PSP's own page collects the card.
+  Future<void> _payCardHostedRedirect() async {
+    final cardSlug = widget.session.cardChannelSlug() ?? 'card';
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.session.payCardHostedRedirect(channelSlug: cardSlug);
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      await _finish(result);
+    } on WajubError catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = e;
+      });
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    final pending = _resumeCompleter;
+    if (pending != null && !pending.isCompleted) pending.complete();
     _phoneController.dispose();
     _holderController.dispose();
+    _emailController.dispose();
     super.dispose();
+  }
+
+  Widget _cardTab() {
+    final cfg = _cardConfig();
+    if (cfg != null && cfg.clientSession) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(labelText: 'Email (for your receipt)', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _submitting ? null : _payCardClientSession,
+            child: Text(_submitting ? 'Processing…' : 'Pay by card'),
+          ),
+        ],
+      );
+    }
+    if (cfg?.sdk == SdkFlavor.stripeElements && cfg?.publishableKey != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _holderController,
+            decoration: const InputDecoration(labelText: 'Cardholder name', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          CardField(
+            onCardChanged: (details) => setState(() => _cardComplete = details?.complete ?? false),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _submitting || !_cardComplete ? null : _payCard,
+            child: Text(_submitting ? 'Processing…' : 'Pay with card'),
+          ),
+        ],
+      );
+    }
+    if (cfg?.sdk == SdkFlavor.hostedRedirect) {
+      return FilledButton(
+        onPressed: _submitting ? null : _payCardHostedRedirect,
+        child: Text(_submitting ? 'Processing…' : 'Pay by card'),
+      );
+    }
+    return const Text('Card payments unavailable for this session.');
   }
 
   @override
@@ -186,9 +362,19 @@ class _PaymentSheetState extends State<PaymentSheet> {
               ],
               if (_loading)
                 const Center(child: CircularProgressIndicator())
-              else if (_error != null)
-                Text(_error!.message, style: TextStyle(color: Theme.of(context).colorScheme.error))
-              else if (_tab == _PaymentTab.mobileMoney) ...[
+              else if (_session == null)
+                Text(
+                  _error?.message ?? 'Failed to load session',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                )
+              else ...[
+                // Submit errors stay inline so the payer can fix the input
+                // (e.g. an email the PSP requires) and retry.
+                if (_error != null) ...[
+                  Text(_error!.message, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  const SizedBox(height: 12),
+                ],
+                if (_tab == _PaymentTab.mobileMoney) ...[
                 if (momoChannels.isEmpty)
                   const Text('No Mobile Money channels available.')
                 else ...[
@@ -218,22 +404,10 @@ class _PaymentSheetState extends State<PaymentSheet> {
                     child: Text(_submitting ? 'Processing…' : 'Pay now'),
                   ),
                 ],
-              ] else if (!hasCard)
-                const Text('No card channel available.')
-              else ...[
-                TextField(
-                  controller: _holderController,
-                  decoration: const InputDecoration(labelText: 'Cardholder name', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                CardField(
-                  onCardChanged: (details) => setState(() => _cardComplete = details?.complete ?? false),
-                ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: _submitting || !_cardComplete ? null : _payCard,
-                  child: Text(_submitting ? 'Processing…' : 'Pay with card'),
-                ),
+                ] else if (!hasCard)
+                  const Text('No card channel available.')
+                else
+                  _cardTab(),
               ],
             ],
           ),

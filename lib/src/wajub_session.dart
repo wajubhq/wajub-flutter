@@ -67,12 +67,55 @@ class WajubSession {
     return PaymentMapper.mapProcessResponse(raw, _methodType(channel));
   }
 
+  /// sdk-config `hosted_redirect` (PayPal, Mollie, Paddle): the PSP's own page
+  /// collects the card — submit with no card data, then open the redirect.
+  Future<PaymentResult> payCardHostedRedirect({required String channelSlug}) async {
+    await loadSession();
+    final raw = await _client.process(_token, channelSlug, const {});
+    return PaymentMapper.mapProcessResponse(raw, 'card');
+  }
+
+  /// `POST /pay/client-session` — PSP-hosted checkout (sdk-config
+  /// `clientSession == true`, e.g. Paystack / Flutterwave cards). Returns
+  /// [PaymentRequiresAction] with [ActionKind.clientSession] and a
+  /// [ClientSession]; open its `hostedUrl` (see [handleRedirectAction]) or
+  /// launch the PSP's native SDK, then call [completeClientSession].
+  /// Idempotent: calling again returns the same open session.
+  Future<PaymentResult> startClientSession({
+    required String channelSlug,
+    String? email,
+    String? name,
+    String? returnUrl,
+    bool restart = false,
+  }) async {
+    await loadSession();
+    final raw = await _client.startClientSession(
+      _token,
+      channelSlug,
+      email: email,
+      name: name,
+      returnUrl: returnUrl,
+      restart: restart,
+    );
+    return PaymentMapper.mapProcessResponse(raw, 'card');
+  }
+
+  /// `POST /pay/client-session/complete` — call when the payer returns from
+  /// the PSP's UI. [PaymentComplete] when verified, [PaymentProcessing] while
+  /// the PSP hasn't confirmed yet (keep [watchStatus] running — the PSP
+  /// webhook settles it). A definitive failure throws [WajubError].
+  Future<PaymentResult> completeClientSession(String clientSessionId) async {
+    final raw = await _client.completeClientSession(_token, clientSessionId);
+    return PaymentMapper.mapProcessResponse(raw, 'card');
+  }
+
   /// Opens redirect / hosted PSP URLs in the system browser (not WebView).
   Future<bool> handleRedirectAction(PaymentResult result) async {
     if (result is! PaymentRequiresAction) return false;
     if (result.action != ActionKind.redirect &&
         result.action != ActionKind.confirm &&
-        result.action != ActionKind.confirm3ds) {
+        result.action != ActionKind.confirm3ds &&
+        result.action != ActionKind.clientSession) {
       return false;
     }
     final url = result.actionUrl;

@@ -59,6 +59,82 @@ void main() {
       expect(action.action, ActionKind.redirect);
       expect(action.actionUrl, 'https://psp.example/confirm');
     });
+
+    test('maps client_session action with the hosted url', () {
+      final raw = RawProcessResponse.fromJson({
+        'code': 202,
+        'status': 'Accepted',
+        'message': 'Client session ready',
+        'action': 'client_session',
+        'client_session': {
+          'id': 'cs_123',
+          'provider': 'paystack',
+          'reference': 'wjb_ref_1',
+          'amount': 500000,
+          'currency': 'NGN',
+          'hosted_url': 'https://checkout.paystack.com/abc',
+          'access_code': 'abc',
+          'public_key': 'pk_test_1',
+        },
+        'transaction': _transactionJson,
+      });
+
+      final result = PaymentMapper.mapProcessResponse(raw, 'card');
+      expect(result, isA<PaymentRequiresAction>());
+      final action = result as PaymentRequiresAction;
+      expect(action.action, ActionKind.clientSession);
+      expect(action.actionUrl, 'https://checkout.paystack.com/abc');
+      expect(action.clientSession?.id, 'cs_123');
+      expect(action.clientSession?.provider, 'paystack');
+      expect(action.clientSession?.accessCode, 'abc');
+      expect(action.clientSession?.publicKey, 'pk_test_1');
+      expect(action.clientSession?.encryptionKey, isNull);
+    });
+
+    for (final unsupported in ['confirm_otp', 'card_reauth']) {
+      test('fails $unsupported with unsupported_action, never processing', () {
+        final raw = RawProcessResponse.fromJson({
+          'code': 202,
+          'status': 'Accepted',
+          'message': 'Action required',
+          'action': unsupported,
+          'transaction': {
+            ..._transactionJson,
+            'processing_context': {'is_mobile_money': true},
+          },
+        });
+
+        final result = PaymentMapper.mapProcessResponse(raw, 'mobile_money');
+        expect(result, isA<PaymentFailed>());
+        expect((result as PaymentFailed).error.code, PaymentMapper.unsupportedActionCode);
+      });
+    }
+
+    test('fails client_session action without a client_session object', () {
+      final raw = RawProcessResponse.fromJson({
+        'code': 202,
+        'status': 'Accepted',
+        'message': 'Client session ready',
+        'action': 'client_session',
+        'transaction': _transactionJson,
+      });
+
+      final result = PaymentMapper.mapProcessResponse(raw, 'card');
+      expect(result, isA<PaymentFailed>());
+      expect((result as PaymentFailed).error.code, PaymentMapper.unsupportedActionCode);
+    });
+
+    test('parses client_session flag from sdk-config', () {
+      final config = SdkConfig.fromJson({
+        'channels': {
+          'card': {'available': true, 'provider': 'paystack', 'sdk': 'form', 'client_session': true},
+          'visa': {'available': true, 'sdk': 'adyen_custom_card'},
+        },
+      });
+      expect(config.channels['card']!.clientSession, isTrue);
+      expect(config.channels['visa']!.clientSession, isFalse);
+      expect(config.channels['visa']!.sdk, SdkFlavor.adyenCustomCard);
+    });
   });
 
   group('StripeAdapter', () {
@@ -69,3 +145,11 @@ void main() {
     });
   });
 }
+
+const _transactionJson = <String, dynamic>{
+  'id': 'trx.test',
+  'reference': 'trx.test',
+  'amount': 1000,
+  'currency': 'NGN',
+  'status': 'processing',
+};

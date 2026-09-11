@@ -11,6 +11,7 @@ class RawProcessResponse {
     this.transaction,
     this.confirmUrl,
     this.simulatorUrl,
+    this.clientSession,
   });
 
   final int code;
@@ -20,6 +21,9 @@ class RawProcessResponse {
   final SessionTransaction? transaction;
   final String? confirmUrl;
   final String? simulatorUrl;
+
+  /// Set on `action: "client_session"` (POST /pay/client-session).
+  final ClientSession? clientSession;
 
   factory RawProcessResponse.fromJson(Map<String, dynamic> json) => RawProcessResponse(
         code: json['code'] as int? ?? 0,
@@ -31,11 +35,18 @@ class RawProcessResponse {
             : null,
         confirmUrl: json['confirm_url'] as String?,
         simulatorUrl: json['simulator_url'] as String?,
+        clientSession: json['client_session'] is Map<String, dynamic>
+            ? ClientSession.fromJson(json['client_session'] as Map<String, dynamic>)
+            : null,
       );
 }
 
 class PaymentMapper {
   static const _successStatuses = {'success', 'successful', 'succeeded', 'paid', 'complete'};
+
+  /// Error code for an `action` this SDK can't perform natively
+  /// (`confirm_otp`, `confirm_pin`, `card_reauth`, …) — see spec/README.md.
+  static const unsupportedActionCode = 'unsupported_action';
 
   static Map<String, dynamic> buildMobileMoneyRequest(MobileMoneyInput input) => {
         'phone': input.phone,
@@ -77,6 +88,30 @@ class PaymentMapper {
           actionUrl: body.confirmUrl ?? body.simulatorUrl,
           transaction: txn,
         );
+      case 'client_session':
+        final clientSession = body.clientSession;
+        if (clientSession != null) {
+          return PaymentRequiresAction(
+            action: ActionKind.clientSession,
+            actionUrl: clientSession.hostedUrl,
+            transaction: txn,
+            clientSession: clientSession,
+          );
+        }
+    }
+
+    // Any other non-null action is a step this SDK can't perform natively.
+    // Mapping it to processing would leave the payer on an endless spinner.
+    final action = body.action;
+    if (action != null) {
+      return PaymentFailed(
+        error: WajubError(
+          type: WajubErrorType.paymentError,
+          message: 'This payment requires a step the SDK cannot handle natively ($action).',
+          code: unsupportedActionCode,
+        ),
+        transaction: txn,
+      );
     }
 
     if (methodType == 'mobile_money') {

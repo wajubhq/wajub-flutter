@@ -172,6 +172,19 @@ class SessionData {
   }
 }
 
+/// Known `sdk-config` flavors (`SdkChannelConfig.sdk`). `adyen_custom_card`
+/// needs Adyen's own client-side encryption, which this SDK doesn't embed —
+/// treat it as unavailable. `paystack_inline`/`flutterwave_inline` are legacy
+/// values api.wajub no longer sends (those cards use client sessions).
+abstract final class SdkFlavor {
+  static const form = 'form';
+  static const stripeElements = 'stripe_elements';
+  static const hostedRedirect = 'hosted_redirect';
+  static const adyenCustomCard = 'adyen_custom_card';
+  static const paystackInline = 'paystack_inline';
+  static const flutterwaveInline = 'flutterwave_inline';
+}
+
 class SdkChannelConfig {
   const SdkChannelConfig({
     required this.available,
@@ -179,13 +192,21 @@ class SdkChannelConfig {
     this.sdk,
     this.publishableKey,
     this.requiredFields = const [],
+    this.clientSession = false,
   });
 
   final bool available;
+
+  /// PREDICTION of the provider — the router re-runs per call. The pinned,
+  /// authoritative provider is [ClientSession.provider].
   final String? provider;
   final String? sdk;
   final String? publishableKey;
   final List<String> requiredFields;
+
+  /// `true` → `WajubSession.startClientSession` can hand this channel to the
+  /// PSP's own hosted checkout (PIN/OTP/AVS handled by the PSP).
+  final bool clientSession;
 
   factory SdkChannelConfig.fromJson(Map<String, dynamic> json) => SdkChannelConfig(
         available: json['available'] as bool? ?? false,
@@ -193,7 +214,79 @@ class SdkChannelConfig {
         sdk: json['sdk'] as String?,
         publishableKey: json['publishable_key'] as String?,
         requiredFields: (json['required_fields'] as List<dynamic>? ?? []).cast<String>(),
+        clientSession: json['client_session'] as bool? ?? false,
       );
+}
+
+/// PSP-hosted checkout session (`client_session` of `POST /pay/client-session`).
+///
+/// Default flow: open [hostedUrl] in the system browser, then call
+/// `WajubSession.completeClientSession` with [id] when the payer returns.
+/// Apps may instead launch the PSP's native SDK themselves — Paystack
+/// Android/Flutter ([publicKey] + [accessCode]), Flutterwave Android
+/// ([publicKey] + [encryptionKey] + [reference] as tx_ref, [amount],
+/// [currency]) — then complete the same way.
+class ClientSession {
+  const ClientSession({
+    required this.id,
+    required this.provider,
+    this.reference,
+    this.amount,
+    this.currency,
+    this.hostedUrl,
+    this.accessCode,
+    this.publicKey,
+    this.encryptionKey,
+  });
+
+  /// Pass back to `POST /pay/client-session/complete` as `client_session_id`.
+  final String id;
+  final String provider;
+
+  /// PSP-side reference (Paystack `reference`, Flutterwave `tx_ref`).
+  final String? reference;
+
+  /// In the PSP's own units (Paystack: subunit; Flutterwave: major).
+  final num? amount;
+  final String? currency;
+  final String? hostedUrl;
+  final String? accessCode;
+  final String? publicKey;
+  final String? encryptionKey;
+
+  factory ClientSession.fromJson(Map<String, dynamic> json) => ClientSession(
+        id: json['id']?.toString() ?? '',
+        provider: json['provider'] as String? ?? '',
+        reference: json['reference'] as String?,
+        amount: json['amount'] as num?,
+        currency: json['currency'] as String?,
+        hostedUrl: json['hosted_url'] as String?,
+        accessCode: json['access_code'] as String?,
+        publicKey: json['public_key'] as String?,
+        encryptionKey: json['encryption_key'] as String?,
+      );
+}
+
+/// Optional body fields of `POST /pay/client-session` (besides `channel`).
+class ClientSessionOptions {
+  const ClientSessionOptions({this.email, this.name, this.returnUrl, this.restart = false});
+
+  /// Required by Paystack/Flutterwave when the transaction has no customer email.
+  final String? email;
+  final String? name;
+
+  /// http(s) URL the PSP's hosted page redirects to after payment.
+  final String? returnUrl;
+
+  /// Replace a session that died on the PSP side (the old one is re-verified first).
+  final bool restart;
+
+  Map<String, dynamic> toJson() => {
+        if (email != null && email!.isNotEmpty) 'email': email,
+        if (name != null && name!.isNotEmpty) 'name': name,
+        if (returnUrl != null && returnUrl!.isNotEmpty) 'return_url': returnUrl,
+        if (restart) 'restart': true,
+      };
 }
 
 class SdkConfig {

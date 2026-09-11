@@ -10,7 +10,8 @@ Future<PaymentResult> handlePaymentAction(
   if (result is PaymentRequiresAction) {
     if (result.action == ActionKind.redirect ||
         result.action == ActionKind.confirm ||
-        result.action == ActionKind.confirm3ds) {
+        result.action == ActionKind.confirm3ds ||
+        result.action == ActionKind.clientSession) {
       await session.handleRedirectAction(result);
     }
   }

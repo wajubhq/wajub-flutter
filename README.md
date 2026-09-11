@@ -39,7 +39,7 @@ or add it to `pubspec.yaml` directly:
 
 ```yaml
 dependencies:
-  wajub_mobile: ^1.1.0
+  wajub_mobile: ^1.2.0
 ```
 
 ## Quick start
@@ -82,6 +82,9 @@ await showWajubPaymentSheet(
 |--------|---------|
 | Mobile Money (`form`) | Native sheet |
 | Card (`stripe_elements`) | Native Stripe `CardField` |
+| Card via Paystack / Flutterwave (`client_session: true`) | PSP-hosted checkout in the system browser |
+| Card (`hosted_redirect` — PayPal, Mollie, Paddle) | System browser via `url_launcher` |
+| Card (`adyen_custom_card`) | Not supported (shown as unavailable) |
 | Redirect / hosted | System browser via `url_launcher` |
 | Realtime | Pusher/Reverb + polling fallback |
 
@@ -94,6 +97,62 @@ final result = await session.payCardWithStripeElements(
 );
 await for (final update in session.watchStatus()) { /* ... */ }
 ```
+
+## Card via Paystack / Flutterwave (client sessions)
+
+When `sdk-config` flags the card channel with `client_session: true`, the
+PSP's own checkout collects the card and runs PIN / OTP / AVS — the SDK never
+touches card data. `PaymentSheet` handles this automatically; headless:
+
+```dart
+final config = await session.getSdkConfig();
+final card = config.channels['card'];
+
+if (card != null && card.clientSession) {
+  // Pins the provider — `card.provider` is only a prediction. Idempotent:
+  // calling it again returns the same open session. Paystack/Flutterwave
+  // need an email when the transaction has none.
+  final started = await session.startClientSession(channelSlug: 'card', email: 'payer@example.com');
+
+  if (started is PaymentRequiresAction && started.action == ActionKind.clientSession) {
+    final cs = started.clientSession!;
+    await session.handleRedirectAction(started); // opens cs.hostedUrl in the system browser
+
+    // …when the app comes back to the foreground:
+    final result = await session.completeClientSession(cs.id);
+    // PaymentComplete → paid; PaymentProcessing → not confirmed yet, keep
+    // watchStatus() running (the PSP webhook settles it). A decline throws
+    // WajubError (402).
+  }
+}
+```
+
+The backend verifies with the PSP by its own reference and checks amount and
+currency; the app never sends a PSP reference.
+
+### Using the PSP's native SDK instead
+
+Instead of `hostedUrl`, you may launch the PSP's native SDK yourself with the
+`ClientSession` fields, then call `completeClientSession(cs.id)` exactly as
+above once it returns (whatever it reports — only the backend's verification
+counts):
+
+- **Paystack** (`cs.provider == 'paystack'`): `cs.publicKey` + `cs.accessCode`.
+- **Flutterwave** (`cs.provider == 'flutterwave'`): `cs.publicKey`,
+  `cs.encryptionKey`, `cs.reference` as `tx_ref`, `cs.amount`, `cs.currency`.
+
+`cs.amount` is in the PSP's own units (Paystack: subunit; Flutterwave: major).
+These PSP SDKs are not bundled with `wajub_mobile`.
+
+If the PSP-side session died (e.g. abandoned), call
+`startClientSession(channelSlug: 'card', restart: true)` — the old one is
+re-verified first.
+
+### Unsupported actions
+
+A payment step this SDK can't perform natively (`confirm_otp`, `confirm_pin`,
+`card_reauth`, …) returns `PaymentFailed` with `error.code ==
+'unsupported_action'` — never `PaymentProcessing`.
 
 ## API URL
 

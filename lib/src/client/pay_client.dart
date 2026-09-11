@@ -38,6 +38,43 @@ class PayClient {
     return RawProcessResponse.fromJson(body);
   }
 
+  /// `POST /pay/client-session` — opens (or re-serves) a PSP-hosted checkout
+  /// for [channel] and pins the provider. Only non-null options are sent.
+  Future<RawProcessResponse> startClientSession(
+    String token,
+    String channel, {
+    String? email,
+    String? name,
+    String? returnUrl,
+    bool restart = false,
+  }) async {
+    final options = ClientSessionOptions(
+      email: email,
+      name: name,
+      returnUrl: returnUrl,
+      restart: restart,
+    );
+    final body = await _request(
+      'POST',
+      token,
+      '/pay/client-session',
+      jsonBody: {'channel': channel, ...options.toJson()},
+    );
+    return RawProcessResponse.fromJson(body);
+  }
+
+  /// `POST /pay/client-session/complete` — the backend verifies with the PSP
+  /// by its own reference; the client never sends a PSP reference.
+  Future<RawProcessResponse> completeClientSession(String token, String clientSessionId) async {
+    final body = await _request(
+      'POST',
+      token,
+      '/pay/client-session/complete',
+      jsonBody: {'client_session_id': clientSessionId},
+    );
+    return RawProcessResponse.fromJson(body);
+  }
+
   Future<CancelResult> cancel(String token) async {
     final body = await _request('POST', token, '/pay/cancel', jsonBody: {});
     return CancelResult(redirectUrl: body['redirect_url'] as String?);
