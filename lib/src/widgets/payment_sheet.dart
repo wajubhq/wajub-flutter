@@ -9,20 +9,9 @@ import '../models/models.dart';
 import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
 import '../wajub_session.dart';
+import 'sheet_strings.dart';
 
 enum _PaymentTab { mobileMoney, card, wallet }
-
-const _hostedCardFieldLabels = {
-  'first_name': 'First name',
-  'last_name': 'Last name',
-  'email': 'Email',
-  'phone': 'Phone number',
-  'address': 'Address',
-  'city': 'City',
-  'country': 'Country (2-letter code, e.g. CI)',
-  'state': 'State / region',
-  'zip_code': 'Postal code',
-};
 
 /// Native payment sheet — Mobile Money + card, no WebView.
 ///
@@ -38,11 +27,19 @@ class PaymentSheet extends StatefulWidget {
     required this.session,
     required this.onDismiss,
     required this.onResult,
+    this.locale,
+    this.onPaymentStarted,
   });
 
   final WajubSession session;
   final VoidCallback onDismiss;
   final ValueChanged<PaymentResult> onResult;
+
+  /// `fr` or `en`. Without it the sheet follows the payment's own language.
+  final String? locale;
+
+  /// Called when the payer submits a payment, before the provider answers.
+  final VoidCallback? onPaymentStarted;
 
   @override
   State<PaymentSheet> createState() => _PaymentSheetState();
@@ -92,6 +89,16 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
     return completer.future;
   }
 
+  SheetStrings get _t => SheetStrings.forLocale(widget.locale ?? _session?.locale);
+
+  /// Marks the start of an attempt, for [showWajubPaymentSheet]: a sheet
+  /// closed after it does not cancel the payment.
+  void _started() {
+    _submitting = true;
+    _error = null;
+    widget.onPaymentStarted?.call();
+  }
+
   SdkChannelConfig? _cardConfig() {
     final cardSlug = widget.session.cardChannelSlug() ?? 'card';
     return _sdkConfig?.channels[cardSlug];
@@ -138,10 +145,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
   Future<void> _payMomo() async {
     final channel = _selectedMomo;
     if (channel == null) return;
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
+    setState(_started);
     try {
       final result = await widget.session.payMobileMoney(
         MobileMoneyInput(
@@ -163,10 +167,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
   }
 
   Future<void> _payWallet(SessionChannel channel) async {
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
+    setState(_started);
     try {
       final result = await widget.session.payWallet(channelSlug: channel.slug);
       if (!mounted) return;
@@ -185,17 +186,14 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
     final cardSlug = widget.session.cardChannelSlug() ?? 'card';
     final cardCfg = _sdkConfig?.channels[cardSlug];
     if (cardCfg?.sdk != SdkFlavor.stripeElements || cardCfg?.publishableKey == null) {
-      setState(() => _error = const WajubError(
+      setState(() => _error = WajubError(
             type: WajubErrorType.paymentError,
-            message: 'Card payments unavailable for this session',
+            message: _t.cardUnavailable,
             code: 'provider_unavailable',
           ));
       return;
     }
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
+    setState(_started);
     try {
       final result = await widget.session.payCardWithStripeElements(
         channelSlug: cardSlug,
@@ -218,10 +216,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
   /// browser, wait for the payer to come back, then verify server-side.
   Future<void> _payCardClientSession() async {
     final cardSlug = widget.session.cardChannelSlug() ?? 'card';
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
+    setState(_started);
     PaymentRequiresAction? started;
     try {
       final email = _emailController.text.trim();
@@ -246,9 +241,9 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
         if (!mounted) return;
         setState(() {
           _submitting = false;
-          _error = const WajubError(
+          _error = WajubError(
             type: WajubErrorType.apiError,
-            message: 'Could not open the payment page.',
+            message: _t.couldNotOpenPage,
             code: 'redirect_failed',
           );
         });
@@ -297,10 +292,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
       for (final field in _redirectFields(_cardConfig()))
         field: _billingController(field).text,
     };
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
+    setState(_started);
     try {
       final result = await widget.session.payCardHostedRedirect(
         channelSlug: cardSlug,
@@ -342,12 +334,12 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
           TextField(
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: 'Email (for your receipt)', border: OutlineInputBorder()),
+            decoration: InputDecoration(labelText: _t.emailForReceipt, border: const OutlineInputBorder()),
           ),
           const SizedBox(height: 16),
           FilledButton(
             onPressed: _submitting ? null : _payCardClientSession,
-            child: Text(_submitting ? 'Processing…' : 'Pay by card'),
+            child: Text(_submitting ? _t.processing : _t.payByCard),
           ),
         ],
       );
@@ -359,7 +351,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
         children: [
           TextField(
             controller: _holderController,
-            decoration: const InputDecoration(labelText: 'Cardholder name', border: OutlineInputBorder()),
+            decoration: InputDecoration(labelText: _t.cardholderName, border: const OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           CardField(
@@ -368,7 +360,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
           const SizedBox(height: 16),
           FilledButton(
             onPressed: _submitting || !_cardComplete ? null : _payCard,
-            child: Text(_submitting ? 'Processing…' : 'Pay with card'),
+            child: Text(_submitting ? _t.processing : _t.payWithCard),
           ),
         ],
       );
@@ -396,7 +388,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
               maxLength: field == 'country' ? 2 : null,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: _hostedCardFieldLabels[field],
+                labelText: _t.fields[field],
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -404,12 +396,12 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
           ],
           FilledButton(
             onPressed: _submitting || !valid ? null : _payCardHostedRedirect,
-            child: Text(_submitting ? 'Processing…' : 'Pay by card'),
+            child: Text(_submitting ? _t.processing : _t.payByCard),
           ),
         ],
       );
     }
-    return const Text('Card payments unavailable for this session.');
+    return Text(_t.cardUnavailable);
   }
 
   @override
@@ -440,8 +432,8 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
             children: [
               Row(
                 children: [
-                  const Expanded(
-                    child: Text('Pay with Wajub', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+                  Expanded(
+                    child: Text(_t.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
                   ),
                   IconButton(onPressed: widget.onDismiss, icon: const Icon(Icons.close)),
                 ],
@@ -453,9 +445,9 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                       ButtonSegment(
                         value: tab,
                         label: Text(switch (tab) {
-                          _PaymentTab.mobileMoney => 'Mobile Money',
-                          _PaymentTab.card => 'Card',
-                          _PaymentTab.wallet => 'Wallet',
+                          _PaymentTab.mobileMoney => _t.mobileMoney,
+                          _PaymentTab.card => _t.card,
+                          _PaymentTab.wallet => _t.wallet,
                         }),
                       ),
                   ],
@@ -468,7 +460,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                 const Center(child: CircularProgressIndicator())
               else if (_session == null)
                 Text(
-                  _error?.message ?? 'Failed to load session',
+                  _error?.message ?? _t.loadFailed,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 )
               else ...[
@@ -479,18 +471,18 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                   const SizedBox(height: 12),
                 ],
                 if (_tab == _PaymentTab.wallet) ...[
-                  const Text('You will approve the payment in the wallet app.'),
+                  Text(_t.walletHint),
                   const SizedBox(height: 12),
                   for (final ch in walletChannels) ...[
                     FilledButton(
                       onPressed: _submitting ? null : () => _payWallet(ch),
-                      child: Text(_submitting ? 'Processing…' : 'Pay with ${ch.name}'),
+                      child: Text(_submitting ? _t.processing : _t.payWith(ch.name)),
                     ),
                     const SizedBox(height: 8),
                   ],
                 ] else if (_tab == _PaymentTab.mobileMoney) ...[
                 if (momoChannels.isEmpty)
-                  const Text('No Mobile Money channels available.')
+                  Text(_t.noMobileMoney)
                 else ...[
                   Wrap(
                     spacing: 8,
@@ -509,17 +501,17 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                   TextField(
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(labelText: 'Phone number', border: OutlineInputBorder()),
+                    decoration: InputDecoration(labelText: _t.phoneNumber, border: const OutlineInputBorder()),
                     onChanged: (_) => setState(() {}),
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
                     onPressed: _submitting || _phoneController.text.trim().isEmpty ? null : _payMomo,
-                    child: Text(_submitting ? 'Processing…' : 'Pay now'),
+                    child: Text(_submitting ? _t.processing : _t.payNow),
                   ),
                 ],
                 ] else if (!hasCard)
-                  const Text('No card channel available.')
+                  Text(_t.noCardChannel)
                 else
                   _cardTab(),
               ],
@@ -532,21 +524,48 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
 }
 
 /// Shows [PaymentSheet] as a modal bottom sheet.
+///
+/// [onResult] receives the outcome of a payment the payer submitted.
+/// [onCancel] is called when the payer closes the sheet (the close button, a
+/// swipe down, the back button) without a result. When nothing had been
+/// submitted yet, the payment is also cancelled on Wajub (`/pay/cancel`), as
+/// the hosted checkout does. When an attempt was under way, it is left
+/// alone: a Mobile Money approval can still land after the sheet is gone, so
+/// follow it with `watchStatus()` or your webhook.
+///
+/// [locale] (`fr` or `en`) picks the sheet's language; without it the sheet
+/// follows the payment's own.
 Future<void> showWajubPaymentSheet({
   required BuildContext context,
   required WajubSession session,
   required ValueChanged<PaymentResult> onResult,
-}) {
-  return showModalBottomSheet<void>(
+  VoidCallback? onCancel,
+  String? locale,
+}) async {
+  var settled = false;
+  var started = false;
+
+  await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     builder: (ctx) => PaymentSheet(
       session: session,
+      locale: locale,
+      onPaymentStarted: () => started = true,
       onDismiss: () => Navigator.of(ctx).pop(),
       onResult: (result) {
+        settled = true;
         onResult(result);
         Navigator.of(ctx).pop();
       },
     ),
   );
+
+  if (settled) return;
+  if (!started) {
+    // Best effort: the payer left, the payment should not stay open. A
+    // failure here changes nothing for the app, which already moves on.
+    unawaited(session.cancel().then((_) {}, onError: (Object _) {}));
+  }
+  onCancel?.call();
 }

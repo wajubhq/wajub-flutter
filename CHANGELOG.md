@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0
+
+- `showWajubPaymentSheet` reports a sheet the payer closes (the close button, a swipe down, the
+  back button) through a new `onCancel` callback. Closing used to say nothing. When nothing had been
+  submitted yet, the payment is also cancelled on Wajub (`POST /pay/cancel`); when an attempt was
+  under way it is left alone, since a Mobile Money approval can still land.
+- The payment sheet speaks French: `showWajubPaymentSheet(locale: 'fr')` asks for it, and without
+  `locale` the sheet follows the payment's own language. English otherwise. `PaymentSheet` takes the
+  same `locale`, and an `onPaymentStarted` callback.
+- An ended session (`410`) is an `authenticationError` with `retryable: false`, and a server error
+  (`5xx`) an `apiError`. Both used to come back as a retryable `paymentError`. `WajubError.param`
+  names the refused field when a refusal is about exactly one.
+
 ## 1.4.0
 
 - One-tap wallet channels (channel `type: wallet`, sdk-config `form` with no `requiredFields` —

@@ -73,6 +73,10 @@ await showWajubPaymentSheet(
         break;
     }
   },
+  // The payer closed the sheet without a result (1.5.0).
+  onCancel: () {},
+  // 'fr' or 'en'; the payment's own language when omitted (1.5.0).
+  locale: 'fr',
 );
 ```
 
