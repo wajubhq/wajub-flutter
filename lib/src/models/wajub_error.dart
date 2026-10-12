@@ -44,8 +44,9 @@ class WajubError implements Exception {
     String? correlationId,
     int? retryAfterSeconds,
   ) {
-    // 410 is an ended session: no retry of the same token can succeed. A 5xx
-    // is Wajub's side, not the payer's payment.
+    // 401, 404 and 410 are a token that is not, or no longer, a payment
+    // session: no retry of the same token can succeed. A 5xx is Wajub's side,
+    // not the payer's payment.
     final type = switch (status) {
       401 || 404 || 410 => WajubErrorType.authenticationError,
       422 => WajubErrorType.invalidRequestError,
@@ -57,7 +58,7 @@ class WajubError implements Exception {
       type: type,
       message: message,
       code: code,
-      retryable: status != 403 && status != 410,
+      retryable: !const {401, 403, 404, 410}.contains(status),
       // The field the refusal is about, when it names exactly one.
       param: details.length == 1 ? details.keys.single : null,
       correlationId: correlationId,

@@ -11,7 +11,8 @@
   same `locale`, and an `onPaymentStarted` callback.
 - An ended session (`410`) is an `authenticationError` with `retryable: false`, and a server error
   (`5xx`) an `apiError`. Both used to come back as a retryable `paymentError`. `WajubError.param`
-  names the refused field when a refusal is about exactly one.
+  names the refused field when a refusal is about exactly one. A token that is not a session
+  (`401`, `404`) is not retryable either: no retry of the same token can succeed.
 - `watchStatus()` hears the payment's realtime updates. It subscribed with your `reference`, a
   channel the API never publishes on; it now subscribes with the payment's Wajub id
   (`transaction.id`), as the API, the React Native SDK and the Android SDK do. The status events

@@ -9,6 +9,14 @@ void main() {
       expect(error.retryable, isFalse);
     });
 
+    for (final status in const [401, 404]) {
+      test('reads a token that is not a session ($status) as an authentication error the payer cannot retry', () {
+        final error = WajubError.fromHttp(status, 'Payment session not found', 'session_not_found', const {}, null, null);
+        expect(error.type, WajubErrorType.authenticationError);
+        expect(error.retryable, isFalse);
+      });
+    }
+
     test('reads a server error as Wajub side, not as a declined payment', () {
       final error = WajubError.fromHttp(503, 'Unavailable', 'service_unavailable', const {}, null, null);
       expect(error.type, WajubErrorType.apiError);
