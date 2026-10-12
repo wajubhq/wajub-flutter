@@ -11,18 +11,10 @@ import '../models/models.dart';
 import '../models/payment_result.dart';
 import 'status_poller.dart';
 
-const _terminalStatuses = {
-  'success',
-  'successful',
-  'succeeded',
-  'paid',
-  'complete',
-  'failed',
-  'cancelled',
-  'expired',
-};
-
-/// Pusher/Reverb with polling fallback — mirrors checkout `realtime.ts`.
+/// Pusher/Reverb for speed, with polling running next to it for the whole
+/// watch: a socket only carries what happens after it subscribed, and a
+/// connected one can still miss an event. Mirrors checkout `realtime.ts` and
+/// the React Native and Kotlin SDKs' subscribers.
 class StatusSubscriber {
   StatusSubscriber(this._client, this._token, {this.interval = const Duration(seconds: 5)});
 
@@ -39,13 +31,11 @@ class StatusSubscriber {
     return Stream.multi((controller) {
       PusherChannelsFlutter? pusher;
       StreamSubscription<PaymentResult>? pollSub;
-      Timer? fallbackTimer;
       var closed = false;
 
       Future<void> closeAll() async {
         if (closed) return;
         closed = true;
-        fallbackTimer?.cancel();
         await pollSub?.cancel();
         try {
           await pusher?.disconnect();
@@ -53,21 +43,26 @@ class StatusSubscriber {
         await controller.close();
       }
 
-      void emitStatus(String status) {
-        final result = PaymentMapper.mapStatusToResult(status, session.transaction);
+      // Two sources for one status: a result goes out when it changes, and
+      // nothing follows a final one, which ends the watch.
+      Type? lastKind;
+      void deliver(PaymentResult result) {
+        if (closed || result.runtimeType == lastKind) return;
+        lastKind = result.runtimeType;
         controller.add(result);
-        if (_terminalStatuses.contains(status.toLowerCase())) {
+        if (result is PaymentComplete || result is PaymentFailed) {
           unawaited(closeAll());
         }
       }
 
-      Future<void> startPolling() async {
-        pollSub ??= StatusPoller(_client, _token, interval: interval).poll().listen(
-          controller.add,
-          onError: controller.addError,
-          onDone: () => unawaited(closeAll()),
-        );
-      }
+      // Not stopped when the socket connects.
+      pollSub = StatusPoller(_client, _token, interval: interval).poll().listen(
+        deliver,
+        onError: (Object error, StackTrace stack) {
+          if (!closed) controller.addError(error, stack);
+        },
+        onDone: () => unawaited(closeAll()),
+      );
 
       unawaited(() async {
         try {
@@ -99,42 +94,53 @@ class StatusSubscriber {
               );
               return jsonDecode(response.body) as Map<String, dynamic>;
             },
-            onConnectionStateChange: (current, previous) async {
-              if (current == 'CONNECTED') {
-                fallbackTimer?.cancel();
-                await pollSub?.cancel();
-                pollSub = null;
-              }
-            },
             onEvent: (event) {
               if (event.eventName != 'PaymentStatusUpdated') return;
-              final raw = event.data;
-              if (raw is Map && raw['status'] is String) {
-                emitStatus(raw['status'] as String);
+              final status = _statusOf(event.data);
+              if (status != null) {
+                deliver(PaymentMapper.mapStatusToResult(status, session.transaction));
               }
             },
             onError: (_, __, ___) {},
             // pusher_channels_flutter has no public API for a custom host/port
             // (self-hosted Reverb), unlike pusher-js — it always dials Pusher's
-            // cloud. Self-hosted deployments fail to connect here and fall
-            // back to the HTTP polling below within `fallbackTimer`.
+            // cloud. Self-hosted deployments fail to connect here, and the
+            // polling carries the watch on its own.
           );
+          if (closed) return;
           await pusher!.connect();
+          // The API publishes on the payment's Wajub id, and its authorizer
+          // signs that channel only. `reference` is the merchant's own:
+          // nothing is published there.
           await pusher!.subscribe(
-            channelName: '${echo.channelPrefix}${session.transaction.reference}',
+            channelName: '${echo.channelPrefix}${session.transaction.id}',
           );
-
-          fallbackTimer = Timer(const Duration(seconds: 10), () async {
-            if (pusher?.connectionState != 'CONNECTED') {
-              await startPolling();
-            }
-          });
+          if (closed) {
+            await pusher!.disconnect();
+          }
         } catch (_) {
-          await startPolling();
+          // No socket: the polling above carries the watch on its own.
         }
       }());
 
       controller.onCancel = () => unawaited(closeAll());
     });
+  }
+
+  /// The status a `PaymentStatusUpdated` event carries. The Android and iOS
+  /// plugins hand its data over as a JSON string, the web one as a map.
+  static String? _statusOf(dynamic data) {
+    var payload = data;
+    if (payload is String) {
+      try {
+        payload = jsonDecode(payload);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (payload is Map && payload['status'] is String) {
+      return payload['status'] as String;
+    }
+    return null;
   }
 }

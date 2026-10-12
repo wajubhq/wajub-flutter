@@ -12,6 +12,17 @@
 - An ended session (`410`) is an `authenticationError` with `retryable: false`, and a server error
   (`5xx`) an `apiError`. Both used to come back as a retryable `paymentError`. `WajubError.param`
   names the refused field when a refusal is about exactly one.
+- `watchStatus()` hears the payment's realtime updates. It subscribed with your `reference`, a
+  channel the API never publishes on; it now subscribes with the payment's Wajub id
+  (`transaction.id`), as the API, the React Native SDK and the Android SDK do. The status events
+  are also read as the Android and iOS plugins deliver them, a JSON string, where only a map was
+  read.
+- `watchStatus()` keeps polling for the whole watch, next to the socket, so a missed event costs at
+  most one interval; it used to stop polling once the socket connected. A result is delivered when
+  it changes, not at every read, and nothing follows a final one. A read that fails is tried again,
+  later each time (at most a minute apart), where it ended the stream; an error the API will always
+  give, an ended session (`410`) for instance, still ends it. Cancelling the subscription stops the
+  reads.
 
 ## 1.4.0
 

@@ -17,7 +17,7 @@ showWajubPaymentSheet()
         ↓
 POST /pay/process → system browser for redirect/3DS
         ↓
-watchStatus() → Pusher or polling until terminal
+watchStatus() → Pusher and polling until terminal
 ```
 
 ## Requirements
@@ -91,7 +91,7 @@ await showWajubPaymentSheet(
 | Card (`adyen_custom_card`) | Web only — Adyen cards use `client_session` on mobile |
 | One-tap wallets, e.g. Djamo (`wallet` channel, `form`, no `requiredFields`) | "Wallet" tab — headless: `payWallet(channelSlug:)` |
 | Redirect / hosted | System browser via `url_launcher` |
-| Realtime | Pusher/Reverb + polling fallback |
+| Realtime | Pusher/Reverb on the payment's id, with polling for the whole watch |
 
 ## Headless integration
 
