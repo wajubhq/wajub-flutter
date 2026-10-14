@@ -173,7 +173,9 @@ class WajubError implements Exception {
         apiMessage: result.errorMessage,
       );
 
-  /// Kept from 1.5: the error of an HTTP answer whose [code] is already known.
+  /// The 1.5 mapping, kept as it was: an HTTP answer whose [code] and
+  /// [message] are already known. The sheet and [WajubSession] use
+  /// [WajubError.fromResponse] (the spec's errors.md §2).
   factory WajubError.fromHttp(
     int status,
     String message,
@@ -181,21 +183,32 @@ class WajubError implements Exception {
     Map<String, String> details,
     String? correlationId,
     int? retryAfterSeconds,
-  ) =>
-      WajubError(
-        type: _typeFor(code, status),
-        message: message,
-        code: code,
-        retryable: _retryableFor(code, status, null),
-        // The field the refusal is about, when it names exactly one.
-        param: details.length == 1 ? details.keys.single : null,
-        correlationId: correlationId,
-        retryAfterSeconds: retryAfterSeconds,
-        details: details,
-        declineCode: status == 402 ? code : null,
-        httpStatus: status,
-        apiMessage: message,
-      );
+  ) {
+    // 401, 404 and 410 are a token that is not, or no longer, a payment
+    // session: no retry of the same token can succeed. A 5xx is Wajub's side,
+    // not the payer's payment.
+    final type = switch (status) {
+      401 || 404 || 410 => WajubErrorType.authenticationError,
+      422 => WajubErrorType.invalidRequestError,
+      429 => WajubErrorType.rateLimitError,
+      >= 500 => WajubErrorType.apiError,
+      _ => WajubErrorType.paymentError,
+    };
+    return WajubError(
+      type: type,
+      message: message,
+      code: code,
+      retryable: !const {401, 403, 404, 410}.contains(status),
+      // The field the refusal is about, when it names exactly one.
+      param: details.length == 1 ? details.keys.single : null,
+      correlationId: correlationId,
+      retryAfterSeconds: retryAfterSeconds,
+      details: details,
+      declineCode: status == 402 ? code : null,
+      httpStatus: status,
+      apiMessage: message,
+    );
+  }
 
   /// The same error with its [message] in [language] (`fr` or `en`): the
   /// catalogue's text when it knows [code]; otherwise, in English, the API's

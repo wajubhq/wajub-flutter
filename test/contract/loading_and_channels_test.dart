@@ -391,7 +391,7 @@ void main() {
       final checkout = Checkout(async, api, locale: 'en');
       checkout.mobileMoney('670000000', pick: 'orange');
       expect(checkout.controller.mismatchWarning,
-          'This is a MTN MoMo number. Pick MTN MoMo in the list, or enter a Orange Money number.');
+          'This number belongs to MTN MoMo. Pick MTN MoMo in the list, or enter a Orange Money number.');
       checkout.run(checkout.controller.payMobileMoney);
       expect(api.calls('/pay/process'), hasLength(1));
       checkout.end();
@@ -404,7 +404,7 @@ void main() {
       expect(checkout.controller.mismatchWarning, isNull);
       checkout.run(checkout.controller.payMobileMoney);
       expect(api.calls('/pay/process'), isEmpty);
-      expect(checkout.controller.fieldErrors['data.phone'], startsWith('This is a MTN MoMo number.'));
+      expect(checkout.controller.fieldErrors['data.phone'], startsWith('This number belongs to MTN MoMo.'));
       checkout.end();
     });
   });

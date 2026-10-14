@@ -106,7 +106,7 @@ abstract final class ErrorCatalogue {
     'operator_mismatch': ErrorEntry(
       _invalid,
       true,
-      'This is a {detected} number. Pick {detected} in the list, or enter a {selected} number.',
+      'This number belongs to {detected}. Pick {detected} in the list, or enter a {selected} number.',
       'Ce numéro est un numéro {detected}. Choisissez {detected} dans la liste, ou saisissez un numéro {selected}.',
     ),
     'operator_required': ErrorEntry(

@@ -431,6 +431,23 @@ void main() {
 
   test('CN-03 dismiss after start resolves processing', () {
     virtual((async) {
+      // Pay pressed, no answer yet: the charge may be running.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-sandbox-cm.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': const FakeAnswer.hang(),
+        'POST /pay/cancel': 'cancel-200.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('670000000', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.recorder.started, isNull);
+      checkout.run(checkout.controller.dismiss);
+      expect(checkout.result, isA<CheckoutProcessing>());
+      expect(api.calls('/pay/cancel'), isEmpty);
+      checkout.async.flushTimers(flushPeriodicTimers: false);
+    });
+    virtual((async) {
       final api = FakeApi(routes: {
         'GET /pay/session': 'session-sandbox-cm.json',
         'GET /pay/sdk-config': 'sdk-config-sandbox.json',

@@ -103,7 +103,8 @@ void main() {
       });
 
       final result = PaymentMapper.mapProcessResponse(raw, 'card') as PaymentRequiresAction;
-      expect(result.action, ActionKind.confirmOtp);
+      expect(result.action, ActionKind.confirm, reason: 'the 1.5 ActionKind values are kept as they were');
+      expect(result.actionUrl, isNull);
       expect(result.step, PaymentStepKind.otp);
       expect(result.stepId, 'prc_1');
       expect(result.hint, '+234******5678');

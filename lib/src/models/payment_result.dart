@@ -1,18 +1,11 @@
 import 'models.dart';
 import 'wajub_error.dart';
 
-enum ActionKind {
-  redirect,
-  confirm,
-  confirm3ds,
-  pushApproval,
-  clientSession,
-  confirmOtp,
-  confirmPin,
-  confirmPhone,
-  confirmBirthday,
-  confirmAddress,
-}
+/// What a [PaymentRequiresAction] asks for. A confirmation step
+/// (`confirm_otp`…) is [confirm] with [PaymentRequiresAction.step] set and no
+/// URL; the sandbox 3-D Secure email code is [confirm3ds] with a
+/// [PaymentRequiresAction.stepId] and no URL.
+enum ActionKind { redirect, confirm, confirm3ds, pushApproval, clientSession }
 
 /// What a payment in progress leaves the payer to do.
 enum ProcessingKind {
@@ -41,14 +34,6 @@ enum PaymentStepKind {
   /// The key of the step's text in the `202`: `otp_masked_contact`,
   /// `pin_instruction`…
   String get hintKey => this == otp ? 'otp_masked_contact' : '${name}_instruction';
-
-  ActionKind get action => switch (this) {
-        otp => ActionKind.confirmOtp,
-        pin => ActionKind.confirmPin,
-        phone => ActionKind.confirmPhone,
-        birthday => ActionKind.confirmBirthday,
-        address => ActionKind.confirmAddress,
-      };
 
   /// `confirm_otp` → [otp]; anything else → null.
   static PaymentStepKind? fromAction(String? action) {
@@ -85,6 +70,7 @@ class PaymentRequiresAction extends PaymentResult {
     this.actionUrl,
     required this.transaction,
     this.clientSession,
+    this.step,
     this.stepId,
     this.hint,
     this.timeoutSeconds,
@@ -101,6 +87,10 @@ class PaymentRequiresAction extends PaymentResult {
   /// its `hostedUrl`.
   final ClientSession? clientSession;
 
+  /// The confirmation step to show (`confirm_otp`… with [action]
+  /// [ActionKind.confirm]); null otherwise.
+  final PaymentStepKind? step;
+
   /// A confirmation step's id (`otp_id`…), or the sandbox 3-D Secure
   /// `three_ds_id`: send it back to the step's verify call.
   final String? stepId;
@@ -111,16 +101,6 @@ class PaymentRequiresAction extends PaymentResult {
 
   /// Sandbox 3-D Secure: seconds the code is valid for.
   final int? timeoutSeconds;
-
-  /// The confirmation step to show, when [action] is one.
-  PaymentStepKind? get step => switch (action) {
-        ActionKind.confirmOtp => PaymentStepKind.otp,
-        ActionKind.confirmPin => PaymentStepKind.pin,
-        ActionKind.confirmPhone => PaymentStepKind.phone,
-        ActionKind.confirmBirthday => PaymentStepKind.birthday,
-        ActionKind.confirmAddress => PaymentStepKind.address,
-        _ => null,
-      };
 }
 
 class PaymentFailed extends PaymentResult {

@@ -147,7 +147,7 @@ void main() {
       'process-422-validation.json': ('data.phone', 'Invalid phone number'),
       'process-422-operator-mismatch.json': (
         'data.phone',
-        'This is a Orange Money number. Pick Orange Money in the list, or enter a MTN MoMo number.'
+        'This number belongs to Orange Money. Pick Orange Money in the list, or enter a MTN MoMo number.'
       ),
       'process-422-sandbox-invalid-test-number.json': ('data.phone', 'Invalid phone number'),
       'process-422-over-mobile-money-limit-sandbox.json': (

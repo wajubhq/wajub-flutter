@@ -202,7 +202,13 @@ class PaymentMapper {
     final step = PaymentStepKind.fromAction(action);
     final stepId = step == null ? null : body.stepIds[step];
     if (step != null && stepId != null) {
-      return PaymentRequiresAction(action: step.action, transaction: txn, stepId: stepId, hint: body.stepHints[step]);
+      return PaymentRequiresAction(
+        action: ActionKind.confirm,
+        transaction: txn,
+        step: step,
+        stepId: stepId,
+        hint: body.stepHints[step],
+      );
     }
     // An action this SDK can't perform, or one without what it needs.
     // Mapping it to processing would leave the payer on an endless spinner.
