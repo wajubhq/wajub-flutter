@@ -111,6 +111,5 @@ class SheetStrings {
   );
 
   /// `fr`, `fr-CM`, `fr_CI` read French; anything else, or nothing, English.
-  static SheetStrings forLocale(String? locale) =>
-      (locale ?? '').toLowerCase().startsWith('fr') ? fr : en;
+  static SheetStrings forLocale(String? locale) => (locale ?? '').toLowerCase().startsWith('fr') ? fr : en;
 }

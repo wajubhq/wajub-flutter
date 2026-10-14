@@ -19,9 +19,22 @@ WajubSession fakeSession(List<http.Request> calls, {String locale = 'en'}) {
         final path = request.url.path;
         final body = switch (path) {
           '/pay/session' => {
-              'transaction': {'id': 'trx_1', 'reference': 'order-1', 'amount': 5000, 'currency': 'XAF', 'status': 'pending'},
+              'transaction': {
+                'id': 'trx_1',
+                'reference': 'order-1',
+                'amount': 5000,
+                'currency': 'XAF',
+                'status': 'pending'
+              },
               'channels': [
-                {'id': 'c1', 'slug': 'cm.mtn', 'name': 'MTN', 'type': 'mobile_money', 'countries': ['CM'], 'currency': 'XAF'},
+                {
+                  'id': 'c1',
+                  'slug': 'cm.mtn',
+                  'name': 'MTN',
+                  'type': 'mobile_money',
+                  'countries': ['CM'],
+                  'currency': 'XAF'
+                },
               ],
               'locale': locale,
             },

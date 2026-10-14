@@ -21,9 +21,8 @@ class StripeAdapter {
       final result = await Stripe.instance.createPaymentMethod(
         params: PaymentMethodParams.card(
           paymentMethodData: PaymentMethodData(
-            billingDetails: cardholderName != null && cardholderName.isNotEmpty
-                ? BillingDetails(name: cardholderName)
-                : null,
+            billingDetails:
+                cardholderName != null && cardholderName.isNotEmpty ? BillingDetails(name: cardholderName) : null,
           ),
         ),
       );

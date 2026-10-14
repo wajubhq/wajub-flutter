@@ -31,14 +31,12 @@ class RawProcessResponse {
         status: readString(json['status']) ?? '',
         message: readString(json['message']) ?? '',
         action: readString(json['action']),
-        transaction: readMap(json['transaction']) != null
-            ? SessionTransaction.fromJson(readMap(json['transaction'])!)
-            : null,
+        transaction:
+            readMap(json['transaction']) != null ? SessionTransaction.fromJson(readMap(json['transaction'])!) : null,
         confirmUrl: readString(json['confirm_url']),
         simulatorUrl: readString(json['simulator_url']),
-        clientSession: readMap(json['client_session']) != null
-            ? ClientSession.fromJson(readMap(json['client_session'])!)
-            : null,
+        clientSession:
+            readMap(json['client_session']) != null ? ClientSession.fromJson(readMap(json['client_session'])!) : null,
       );
 }
 

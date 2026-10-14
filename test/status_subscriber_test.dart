@@ -48,7 +48,8 @@ class FakePusher {
     );
   }
 
-  Future<void> connected() => says('onConnectionStateChange', {'currentState': 'connected', 'previousState': 'connecting'});
+  Future<void> connected() =>
+      says('onConnectionStateChange', {'currentState': 'connected', 'previousState': 'connecting'});
 
   /// A `PaymentStatusUpdated` event, with its data as the Android and iOS plugins hand it over: a JSON string.
   Future<void> statusUpdated(String status) => says('onEvent', {
@@ -72,12 +73,19 @@ class FakeApi {
           if (failures.isNotEmpty) {
             final failure = failures.removeAt(0);
             if (failure is int) {
-              return http.Response(jsonEncode({'message': 'Session ended'}), failure, headers: {'content-type': 'application/json'});
+              return http.Response(jsonEncode({'message': 'Session ended'}), failure,
+                  headers: {'content-type': 'application/json'});
             }
             throw failure;
           }
           final body = {
-            'transaction': {'id': paymentId, 'reference': merchantReference, 'amount': 1000, 'currency': 'XAF', 'status': status},
+            'transaction': {
+              'id': paymentId,
+              'reference': merchantReference,
+              'amount': 1000,
+              'currency': 'XAF',
+              'status': status
+            },
             'channels': <dynamic>[],
           };
           return http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
@@ -86,7 +94,8 @@ class FakeApi {
 }
 
 const session = SessionData(
-  transaction: SessionTransaction(id: paymentId, reference: merchantReference, amount: 1000, currency: 'XAF', status: 'processing'),
+  transaction: SessionTransaction(
+      id: paymentId, reference: merchantReference, amount: 1000, currency: 'XAF', status: 'processing'),
   channels: [],
   echo: EchoConfig(
     key: 'app_key',
@@ -174,7 +183,8 @@ void main() {
 
   group('without realtime settings, polling alone', () {
     const polledOnly = SessionData(
-      transaction: SessionTransaction(id: paymentId, reference: merchantReference, amount: 1000, currency: 'XAF', status: 'processing'),
+      transaction: SessionTransaction(
+          id: paymentId, reference: merchantReference, amount: 1000, currency: 'XAF', status: 'processing'),
       channels: [],
     );
 

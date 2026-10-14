@@ -57,12 +57,12 @@ class StatusSubscriber {
 
       // Not stopped when the socket connects.
       pollSub = StatusPoller(_client, _token, interval: interval).poll().listen(
-        deliver,
-        onError: (Object error, StackTrace stack) {
-          if (!closed) controller.addError(error, stack);
-        },
-        onDone: () => unawaited(closeAll()),
-      );
+            deliver,
+            onError: (Object error, StackTrace stack) {
+              if (!closed) controller.addError(error, stack);
+            },
+            onDone: () => unawaited(closeAll()),
+          );
 
       unawaited(() async {
         try {

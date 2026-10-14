@@ -103,7 +103,14 @@ void main() {
               ? {
                   'transaction': txn,
                   'channels': [
-                    {'id': 'c', 'slug': 'card', 'name': 'Card', 'type': 'card', 'countries': <String>[], 'currency': 'XOF'},
+                    {
+                      'id': 'c',
+                      'slug': 'card',
+                      'name': 'Card',
+                      'type': 'card',
+                      'countries': <String>[],
+                      'currency': 'XOF'
+                    },
                   ],
                 }
               : {
@@ -145,7 +152,14 @@ void main() {
               ? {
                   'transaction': txn,
                   'channels': [
-                    {'id': 'd', 'slug': 'ci.djamo', 'name': 'Djamo CI', 'type': 'wallet', 'countries': ['CI'], 'currency': 'XOF'},
+                    {
+                      'id': 'd',
+                      'slug': 'ci.djamo',
+                      'name': 'Djamo CI',
+                      'type': 'wallet',
+                      'countries': ['CI'],
+                      'currency': 'XOF'
+                    },
                   ],
                 }
               : {

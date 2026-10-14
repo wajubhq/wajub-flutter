@@ -11,7 +11,8 @@ void main() {
 
     for (final status in const [401, 404]) {
       test('reads a token that is not a session ($status) as an authentication error the payer cannot retry', () {
-        final error = WajubError.fromHttp(status, 'Payment session not found', 'session_not_found', const {}, null, null);
+        final error =
+            WajubError.fromHttp(status, 'Payment session not found', 'session_not_found', const {}, null, null);
         expect(error.type, WajubErrorType.authenticationError);
         expect(error.retryable, isFalse);
       });
@@ -26,11 +27,14 @@ void main() {
 
     test('names the refused field in param when the refusal is about one field', () {
       expect(
-        WajubError.fromHttp(422, 'Invalid phone', 'validation_error', const {'data.phone': 'Invalid phone number.'}, null, null).param,
+        WajubError.fromHttp(
+                422, 'Invalid phone', 'validation_error', const {'data.phone': 'Invalid phone number.'}, null, null)
+            .param,
         'data.phone',
       );
       expect(
-        WajubError.fromHttp(422, 'Two fields', 'validation_error', const {'phone': 'x', 'email': 'y'}, null, null).param,
+        WajubError.fromHttp(422, 'Two fields', 'validation_error', const {'phone': 'x', 'email': 'y'}, null, null)
+            .param,
         isNull,
       );
     });

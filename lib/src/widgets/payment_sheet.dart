@@ -266,9 +266,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
         // decline; anything else (network, expired session) may still be
         // settled by the PSP webhook → processing, keep watching the status.
         await _finish(
-          e.declineCode != null
-              ? PaymentFailed(error: e, transaction: transaction)
-              : PaymentProcessing(transaction),
+          e.declineCode != null ? PaymentFailed(error: e, transaction: transaction) : PaymentProcessing(transaction),
         );
         return;
       }
@@ -277,9 +275,8 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
   }
 
   /// sdk-config `requiredFields` a hosted-redirect PSP can ask the payer for.
-  List<String> _redirectFields(SdkChannelConfig? cfg) => (cfg?.requiredFields ?? const [])
-      .where(PaymentMapper.hostedCardFields.contains)
-      .toList();
+  List<String> _redirectFields(SdkChannelConfig? cfg) =>
+      (cfg?.requiredFields ?? const []).where(PaymentMapper.hostedCardFields.contains).toList();
 
   TextEditingController _billingController(String field) =>
       _billingControllers.putIfAbsent(field, TextEditingController.new);
@@ -289,8 +286,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
   Future<void> _payCardHostedRedirect() async {
     final cardSlug = widget.session.cardChannelSlug() ?? 'card';
     final billing = {
-      for (final field in _redirectFields(_cardConfig()))
-        field: _billingController(field).text,
+      for (final field in _redirectFields(_cardConfig())) field: _billingController(field).text,
     };
     setState(_started);
     try {
@@ -367,8 +363,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
     }
     if (cfg?.sdk == SdkFlavor.hostedRedirect) {
       final fields = _redirectFields(cfg);
-      final valid = fields.every((f) =>
-          PaymentMapper.hostedCardFieldError(f, _billingController(f).text) == null);
+      final valid = fields.every((f) => PaymentMapper.hostedCardFieldError(f, _billingController(f).text) == null);
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -382,9 +377,7 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                   : field == 'phone'
                       ? TextInputType.phone
                       : TextInputType.text,
-              textCapitalization: field == 'country'
-                  ? TextCapitalization.characters
-                  : TextCapitalization.none,
+              textCapitalization: field == 'country' ? TextCapitalization.characters : TextCapitalization.none,
               maxLength: field == 'country' ? 2 : null,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
@@ -406,9 +399,11 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
-    final momoChannels = _session?.channels.where(
-          (c) => c.type.toLowerCase() == 'mobile_money' || c.type.toLowerCase() == 'mobile',
-        ).toList() ??
+    final momoChannels = _session?.channels
+            .where(
+              (c) => c.type.toLowerCase() == 'mobile_money' || c.type.toLowerCase() == 'mobile',
+            )
+            .toList() ??
         [];
     final hasCard = _session?.channels.any((c) => c.type.toLowerCase() == 'card') ?? false;
     final walletChannels = _session?.channels
@@ -481,35 +476,35 @@ class _PaymentSheetState extends State<PaymentSheet> with WidgetsBindingObserver
                     const SizedBox(height: 8),
                   ],
                 ] else if (_tab == _PaymentTab.mobileMoney) ...[
-                if (momoChannels.isEmpty)
-                  Text(_t.noMobileMoney)
-                else ...[
-                  Wrap(
-                    spacing: 8,
-                    children: momoChannels.map((ch) {
-                      return ChoiceChip(
-                        label: Text(ch.name),
-                        selected: _selectedMomo?.slug == ch.slug,
-                        onSelected: (_) => setState(() {
-                          _selectedMomo = ch;
-                          _country = ch.countries.firstOrNull ?? _country;
-                        }),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _phoneController,
-                    keyboardType: TextInputType.phone,
-                    decoration: InputDecoration(labelText: _t.phoneNumber, border: const OutlineInputBorder()),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: _submitting || _phoneController.text.trim().isEmpty ? null : _payMomo,
-                    child: Text(_submitting ? _t.processing : _t.payNow),
-                  ),
-                ],
+                  if (momoChannels.isEmpty)
+                    Text(_t.noMobileMoney)
+                  else ...[
+                    Wrap(
+                      spacing: 8,
+                      children: momoChannels.map((ch) {
+                        return ChoiceChip(
+                          label: Text(ch.name),
+                          selected: _selectedMomo?.slug == ch.slug,
+                          onSelected: (_) => setState(() {
+                            _selectedMomo = ch;
+                            _country = ch.countries.firstOrNull ?? _country;
+                          }),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _phoneController,
+                      keyboardType: TextInputType.phone,
+                      decoration: InputDecoration(labelText: _t.phoneNumber, border: const OutlineInputBorder()),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: _submitting || _phoneController.text.trim().isEmpty ? null : _payMomo,
+                      child: Text(_submitting ? _t.processing : _t.payNow),
+                    ),
+                  ],
                 ] else if (!hasCard)
                   Text(_t.noCardChannel)
                 else

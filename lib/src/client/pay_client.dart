@@ -136,9 +136,8 @@ class PayClient {
     String? correlationId,
     int? retryAfter,
   ) {
-    final message = readString(body['message'])?.isNotEmpty == true
-        ? readString(body['message'])!
-        : 'Request failed ($code)';
+    final message =
+        readString(body['message'])?.isNotEmpty == true ? readString(body['message'])! : 'Request failed ($code)';
     final errorCode = readString(body['error_code']) ??
         switch (code) {
           402 => 'insufficient_funds',
