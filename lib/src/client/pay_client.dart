@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../models/json_read.dart';
 import '../models/models.dart';
 import '../models/wajub_error.dart';
 import '../mapper/payment_mapper.dart';
@@ -77,7 +78,7 @@ class PayClient {
 
   Future<CancelResult> cancel(String token) async {
     final body = await _request('POST', token, '/pay/cancel', jsonBody: {});
-    return CancelResult(redirectUrl: body['redirect_url'] as String?);
+    return CancelResult(redirectUrl: readString(body['redirect_url']));
   }
 
   Future<Map<String, dynamic>> _request(
@@ -112,7 +113,16 @@ class PayClient {
     final correlationId = response.headers['x-request-id'] ?? response.headers['x-trace-id'];
     final retryAfter = int.tryParse(response.headers['retry-after'] ?? '');
     final text = response.body;
-    final body = text.isNotEmpty ? jsonDecode(text) as Map<String, dynamic> : <String, dynamic>{};
+    // A proxy's HTML error page is not JSON: read it as an empty body so the
+    // status still maps to a WajubError instead of a FormatException.
+    Map<String, dynamic> body = <String, dynamic>{};
+    if (text.isNotEmpty) {
+      try {
+        body = readMap(jsonDecode(text)) ?? <String, dynamic>{};
+      } on FormatException {
+        if (response.statusCode >= 200 && response.statusCode < 300) rethrow;
+      }
+    }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _mapError(response.statusCode, body, correlationId, retryAfter);
@@ -126,10 +136,10 @@ class PayClient {
     String? correlationId,
     int? retryAfter,
   ) {
-    final message = (body['message'] as String?)?.isNotEmpty == true
-        ? body['message'] as String
+    final message = readString(body['message'])?.isNotEmpty == true
+        ? readString(body['message'])!
         : 'Request failed ($code)';
-    final errorCode = body['error_code'] as String? ??
+    final errorCode = readString(body['error_code']) ??
         switch (code) {
           402 => 'insufficient_funds',
           403 => 'blocked',

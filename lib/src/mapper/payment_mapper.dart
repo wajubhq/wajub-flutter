@@ -1,3 +1,4 @@
+import '../models/json_read.dart';
 import '../models/models.dart';
 import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
@@ -26,17 +27,17 @@ class RawProcessResponse {
   final ClientSession? clientSession;
 
   factory RawProcessResponse.fromJson(Map<String, dynamic> json) => RawProcessResponse(
-        code: json['code'] as int? ?? 0,
-        status: json['status'] as String? ?? '',
-        message: json['message'] as String? ?? '',
-        action: json['action'] as String?,
-        transaction: json['transaction'] != null
-            ? SessionTransaction.fromJson(json['transaction'] as Map<String, dynamic>)
+        code: readInt(json['code']) ?? 0,
+        status: readString(json['status']) ?? '',
+        message: readString(json['message']) ?? '',
+        action: readString(json['action']),
+        transaction: readMap(json['transaction']) != null
+            ? SessionTransaction.fromJson(readMap(json['transaction'])!)
             : null,
-        confirmUrl: json['confirm_url'] as String?,
-        simulatorUrl: json['simulator_url'] as String?,
-        clientSession: json['client_session'] is Map<String, dynamic>
-            ? ClientSession.fromJson(json['client_session'] as Map<String, dynamic>)
+        confirmUrl: readString(json['confirm_url']),
+        simulatorUrl: readString(json['simulator_url']),
+        clientSession: readMap(json['client_session']) != null
+            ? ClientSession.fromJson(readMap(json['client_session'])!)
             : null,
       );
 }

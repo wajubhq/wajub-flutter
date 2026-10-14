@@ -1,3 +1,5 @@
+import 'json_read.dart';
+
 class ProcessingContext {
   const ProcessingContext({
     this.channelSlug,
@@ -12,10 +14,10 @@ class ProcessingContext {
   final String? actionUrl;
 
   factory ProcessingContext.fromJson(Map<String, dynamic> json) => ProcessingContext(
-        channelSlug: json['channel_slug'] as String?,
-        isMobileMoney: json['is_mobile_money'] as bool? ?? false,
-        payerInstruction: json['payer_instruction'] as String?,
-        actionUrl: json['action_url'] as String?,
+        channelSlug: readString(json['channel_slug']),
+        isMobileMoney: readBool(json['is_mobile_money']) ?? false,
+        payerInstruction: readString(json['payer_instruction']),
+        actionUrl: readString(json['action_url']),
       );
 }
 
@@ -61,18 +63,18 @@ class SessionTransaction {
       );
 
   factory SessionTransaction.fromJson(Map<String, dynamic> json) => SessionTransaction(
-        id: json['id'] as String? ?? json['reference'] as String,
-        reference: json['reference'] as String? ?? json['id'] as String,
-        trxref: json['trxref'] as String?,
-        amount: (json['amount'] as num).toDouble(),
-        amountTotal: json['amount_total'] != null ? (json['amount_total'] as num).toDouble() : null,
-        currency: json['currency'] as String,
-        status: json['status'] as String,
-        statusLabel: json['status_label'] as String?,
-        sandbox: json['sandbox'] as bool? ?? false,
-        description: json['description'] as String?,
-        processingContext: json['processing_context'] != null
-            ? ProcessingContext.fromJson(json['processing_context'] as Map<String, dynamic>)
+        id: readString(json['id']) ?? readString(json['reference']) ?? '',
+        reference: readString(json['reference']) ?? readString(json['id']) ?? '',
+        trxref: readString(json['trxref']),
+        amount: readDouble(json['amount']) ?? 0,
+        amountTotal: readDouble(json['amount_total']),
+        currency: readString(json['currency']) ?? '',
+        status: readString(json['status']) ?? 'pending',
+        statusLabel: readString(json['status_label']),
+        sandbox: readBool(json['sandbox']) ?? false,
+        description: readString(json['description']),
+        processingContext: readMap(json['processing_context']) != null
+            ? ProcessingContext.fromJson(readMap(json['processing_context'])!)
             : null,
       );
 }
@@ -103,16 +105,17 @@ class SessionChannel {
   final String currency;
 
   factory SessionChannel.fromJson(Map<String, dynamic> json) => SessionChannel(
-        id: json['id'] as String,
-        slug: json['slug'] as String,
-        name: json['name'] as String,
-        nameFr: json['name_fr'] as String?,
-        type: json['type'] as String,
-        logo: json['logo'] as String?,
-        countries: (json['countries'] as List<dynamic>? ?? []).cast<String>(),
-        minAmount: json['min_amount'] != null ? (json['min_amount'] as num).toDouble() : null,
-        maxAmount: json['max_amount'] != null ? (json['max_amount'] as num).toDouble() : null,
-        currency: json['currency'] as String,
+        id: readString(json['id']) ?? readString(json['slug']) ?? '',
+        slug: readString(json['slug']) ?? readString(json['id']) ?? '',
+        name: readString(json['name']) ?? readString(json['slug']) ?? '',
+        // The API sends the French name under the literal key `name.fr`.
+        nameFr: readString(json['name.fr']) ?? readString(json['name_fr']),
+        type: readString(json['type']) ?? 'mobile_money',
+        logo: readString(json['logo']),
+        countries: readStringList(json['countries']),
+        minAmount: readDouble(json['min_amount']),
+        maxAmount: readDouble(json['max_amount']),
+        currency: readString(json['currency']) ?? '',
       );
 }
 
@@ -132,11 +135,11 @@ class EchoConfig {
   final String broadcaster;
 
   factory EchoConfig.fromJson(Map<String, dynamic> json) => EchoConfig(
-        key: json['key'] as String,
-        wsHost: json['ws_host'] as String,
-        wsPort: json['ws_port'] as int,
-        channelPrefix: json['channel_prefix'] as String,
-        broadcaster: json['broadcaster'] as String,
+        key: readString(json['key']) ?? '',
+        wsHost: readString(json['ws_host']) ?? '',
+        wsPort: readInt(json['ws_port']) ?? 443,
+        channelPrefix: readString(json['channel_prefix']) ?? 'private-payment.',
+        broadcaster: readString(json['broadcaster']) ?? 'pusher',
       );
 }
 
@@ -158,16 +161,21 @@ class SessionData {
   final String? callback;
 
   factory SessionData.fromJson(Map<String, dynamic> json) {
-    final brandingRaw = json['branding'] as Map<String, dynamic>? ?? {};
+    final brandingRaw = readMap(json['branding']) ?? const {};
+    final echoRaw = readMap(json['echo']);
     return SessionData(
-      transaction: SessionTransaction.fromJson(json['transaction'] as Map<String, dynamic>),
-      channels: (json['channels'] as List<dynamic>? ?? [])
-          .map((e) => SessionChannel.fromJson(e as Map<String, dynamic>))
+      transaction: SessionTransaction.fromJson(readMap(json['transaction']) ?? const {}),
+      channels: (json['channels'] is List ? json['channels'] as List<dynamic> : const [])
+          .map(readMap)
+          .whereType<Map<String, dynamic>>()
+          .map(SessionChannel.fromJson)
           .toList(),
-      locale: json['locale'] as String? ?? 'en',
-      branding: brandingRaw.map((k, v) => MapEntry(k, v as String?)),
-      echo: json['echo'] != null ? EchoConfig.fromJson(json['echo'] as Map<String, dynamic>) : null,
-      callback: json['callback'] as String?,
+      locale: readString(json['locale']) ?? 'en',
+      // Values keep their text form: `white_label` (bool) reads "true" or
+      // "false", `overlay_intensity` (int) its digits.
+      branding: brandingRaw.map((k, v) => MapEntry(k, readString(v))),
+      echo: echoRaw != null && readString(echoRaw['key']) != null ? EchoConfig.fromJson(echoRaw) : null,
+      callback: readString(json['callback']),
     );
   }
 }
@@ -209,12 +217,12 @@ class SdkChannelConfig {
   final bool clientSession;
 
   factory SdkChannelConfig.fromJson(Map<String, dynamic> json) => SdkChannelConfig(
-        available: json['available'] as bool? ?? false,
-        provider: json['provider'] as String?,
-        sdk: json['sdk'] as String?,
-        publishableKey: json['publishable_key'] as String?,
-        requiredFields: (json['required_fields'] as List<dynamic>? ?? []).cast<String>(),
-        clientSession: json['client_session'] as bool? ?? false,
+        available: readBool(json['available']) ?? false,
+        provider: readString(json['provider']),
+        sdk: readString(json['sdk']),
+        publishableKey: readString(json['publishable_key']),
+        requiredFields: readStringList(json['required_fields']),
+        clientSession: readBool(json['client_session']) ?? false,
       );
 }
 
@@ -256,14 +264,14 @@ class ClientSession {
 
   factory ClientSession.fromJson(Map<String, dynamic> json) => ClientSession(
         id: json['id']?.toString() ?? '',
-        provider: json['provider'] as String? ?? '',
-        reference: json['reference'] as String?,
-        amount: json['amount'] as num?,
-        currency: json['currency'] as String?,
-        hostedUrl: json['hosted_url'] as String?,
-        accessCode: json['access_code'] as String?,
-        publicKey: json['public_key'] as String?,
-        encryptionKey: json['encryption_key'] as String?,
+        provider: readString(json['provider']) ?? '',
+        reference: readString(json['reference']),
+        amount: json['amount'] is num ? json['amount'] as num : readDouble(json['amount']),
+        currency: readString(json['currency']),
+        hostedUrl: readString(json['hosted_url']),
+        accessCode: readString(json['access_code']),
+        publicKey: readString(json['public_key']),
+        encryptionKey: readString(json['encryption_key']),
       );
 }
 
@@ -295,11 +303,12 @@ class SdkConfig {
   final Map<String, SdkChannelConfig> channels;
 
   factory SdkConfig.fromJson(Map<String, dynamic> json) {
-    final raw = json['channels'] as Map<String, dynamic>? ?? {};
+    final raw = readMap(json['channels']) ?? const {};
     return SdkConfig(
-      channels: raw.map(
-        (slug, value) => MapEntry(slug, SdkChannelConfig.fromJson(value as Map<String, dynamic>)),
-      ),
+      channels: {
+        for (final entry in raw.entries)
+          if (readMap(entry.value) != null) entry.key: SdkChannelConfig.fromJson(readMap(entry.value)!),
+      },
     );
   }
 }

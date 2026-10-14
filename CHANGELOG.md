@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.1
+
+- `WajubSession.loadSession` no longer throws on every session. The merchant branding the API
+  sends holds booleans and integers (`white_label`, `overlay_intensity`), and each value was cast to
+  a string. `SessionData.branding` keeps its type, with those values in their text form (`"true"`,
+  `"40"`).
+- Amounts, ports and flags are read whatever their JSON type (number or numeric string), the
+  French channel name is read from `name.fr`, where the API puts it, and an error page that is not
+  JSON (a proxy's `502`) comes back as a `WajubError` rather than a `FormatException`.
+
 ## 1.5.0
 
 - `showWajubPaymentSheet` reports a sheet the payer closes (the close button, a swipe down, the
