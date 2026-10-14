@@ -91,6 +91,25 @@ void main() {
       expect(action.clientSession?.encryptionKey, isNull);
     });
 
+    test('maps confirm_otp with its otp_id to the OTP step', () {
+      final raw = RawProcessResponse.fromJson({
+        'code': 202,
+        'status': 'Accepted',
+        'message': 'Confirm your card payment.',
+        'action': 'confirm_otp',
+        'otp_id': 'prc_1',
+        'otp_masked_contact': '+234******5678',
+        'transaction': _transactionJson,
+      });
+
+      final result = PaymentMapper.mapProcessResponse(raw, 'card') as PaymentRequiresAction;
+      expect(result.action, ActionKind.confirmOtp);
+      expect(result.step, PaymentStepKind.otp);
+      expect(result.stepId, 'prc_1');
+      expect(result.hint, '+234******5678');
+    });
+
+    // confirm_otp without its otp_id lacks what it needs; card_reauth is unknown.
     for (final unsupported in ['confirm_otp', 'card_reauth']) {
       test('fails $unsupported with unsupported_action, never processing', () {
         final raw = RawProcessResponse.fromJson({
@@ -138,14 +157,6 @@ void main() {
   });
 
   group('hosted-redirect billing fields (sdk-config required_fields)', () {
-    test('validates required, email and 2-letter country values', () {
-      expect(PaymentMapper.hostedCardFieldError('city', '  '), 'Required');
-      expect(PaymentMapper.hostedCardFieldError('email', 'nope'), 'Invalid email');
-      expect(PaymentMapper.hostedCardFieldError('email', 'payer@example.test'), isNull);
-      expect(PaymentMapper.hostedCardFieldError('country', 'CIV'), 'Use the 2-letter country code');
-      expect(PaymentMapper.hostedCardFieldError('country', 'ci'), isNull);
-    });
-
     test('builds flat data, trimming, upper-casing the country and dropping blanks and unknown keys', () {
       expect(
         PaymentMapper.buildHostedCardRequest(

@@ -1,46 +1,108 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../mapper/payment_mapper.dart';
 import '../models/json_read.dart';
 import '../models/models.dart';
+import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
-import '../mapper/payment_mapper.dart';
+import 'client_info.dart';
+import 'ids.dart';
+import 'platform_web.dart' if (dart.library.io) 'platform_io.dart';
 
+/// How a call may be tried again (spec README §2.5).
+enum _Retry {
+  /// GETs: network, timeout, 408, 429 (`Retry-After` ≤ 10 s), 5xx but 501.
+  read,
+
+  /// Payment POSTs: network, timeout, 502, 503, 504 — the same body again.
+  payment,
+
+  /// `POST /pay/cancel`: network and timeout only.
+  cancel,
+
+  /// Verify calls and the rest: never.
+  never,
+}
+
+/// The `/pay/*` calls, with the headers, timeouts and retries of the spec
+/// (README §2). Every method throws a [WajubError] when the call fails.
 class PayClient {
-  PayClient({http.Client? httpClient}) : _http = httpClient ?? http.Client();
+  PayClient({http.Client? httpClient, Future<ClientInfo> Function()? clientInfo, Random? random})
+      : _http = httpClient ?? createHttpClient(connectTimeout),
+        _clientInfo = clientInfo ?? ClientInfo.current,
+        _random = random ?? Random();
 
   final http.Client _http;
+  final Future<ClientInfo> Function() _clientInfo;
+  final Random _random;
+
+  /// Every call gives up connecting after this long.
+  static const connectTimeout = Duration(seconds: 10);
+
+  /// Whole-request limit of the reads, cancel, resends and realtime auth.
+  static const requestTimeout = Duration(seconds: 30);
+
+  /// Whole-request limit of the calls that reach a payment provider while
+  /// they run: process, client sessions, verify.
+  static const paymentRequestTimeout = Duration(seconds: 60);
+
+  static const _maxReadRetries = 3;
+  static const _maxPostRetries = 2;
+  static const _maxRetryAfter = Duration(seconds: 10);
+
+  /// The language of the [WajubError] messages: `fr` or `en`. The device's
+  /// until the payment sheet sets the payment's.
+  String language = PlatformDispatcher.instance.locale.languageCode == 'fr' ? 'fr' : 'en';
 
   Future<SessionData> getSession(String token) async {
-    final body = await _request('GET', token, '/pay/session');
-    return SessionData.fromJson(body);
+    final answer = await _send('GET', token, '/pay/session', retry: _Retry.read, loading: true);
+    return _parse(answer, SessionData.fromJson);
   }
 
   Future<SdkConfig> getSdkConfig(String token) async {
-    final body = await _request('GET', token, '/pay/sdk-config');
-    return SdkConfig.fromJson(body);
+    final answer = await _send('GET', token, '/pay/sdk-config', retry: _Retry.read, loading: true);
+    return _parse(answer, SdkConfig.fromJson);
   }
 
+  /// `GET /pay/status`: the payment's status, by its Wajub id.
+  Future<PaymentStatusUpdate> getStatus(String token) async {
+    final answer = await _send('GET', token, '/pay/status', retry: _Retry.read, loading: true);
+    return _parse(answer, PaymentStatusUpdate.fromJson);
+  }
+
+  /// `POST /pay/process`. [data] gets the device signals (`_client`). The
+  /// automatic retries send the same body under the same [idempotencyKey];
+  /// give a new key for each press of Pay.
   Future<RawProcessResponse> process(
     String token,
     String channel,
-    Map<String, dynamic> data,
-  ) async {
-    final body = await _request(
+    Map<String, dynamic> data, {
+    String? idempotencyKey,
+  }) async {
+    final info = await _clientInfo();
+    final answer = await _send(
       'POST',
       token,
       '/pay/process',
-      jsonBody: {'channel': channel, 'data': data},
-      extraHeaders: {'Idempotency-Key': _idempotencyKey()},
+      body: {
+        'channel': channel,
+        'data': {...data, '_client': info.signals},
+      },
+      timeout: paymentRequestTimeout,
+      retry: _Retry.payment,
+      headers: {'Idempotency-Key': idempotencyKey ?? uuidV4()},
     );
-    return RawProcessResponse.fromJson(body);
+    return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
   }
 
   /// `POST /pay/client-session` — opens (or re-serves) a PSP-hosted checkout
-  /// for [channel] and pins the provider. Only non-null options are sent.
+  /// for [channel] and pins the provider. Only non-empty options are sent.
   Future<RawProcessResponse> startClientSession(
     String token,
     String channel, {
@@ -48,120 +110,238 @@ class PayClient {
     String? name,
     String? returnUrl,
     bool restart = false,
+    Map<String, String> billing = const {},
+    Map<String, Object?>? altcha,
   }) async {
     final options = ClientSessionOptions(
       email: email,
       name: name,
       returnUrl: returnUrl,
       restart: restart,
+      billing: billing,
     );
-    final body = await _request(
+    final answer = await _send(
       'POST',
       token,
       '/pay/client-session',
-      jsonBody: {'channel': channel, ...options.toJson()},
+      body: {'channel': channel, ...options.toJson(), if (altcha != null) 'altcha': altcha},
+      timeout: paymentRequestTimeout,
+      retry: _Retry.payment,
     );
-    return RawProcessResponse.fromJson(body);
+    return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
   }
 
   /// `POST /pay/client-session/complete` — the backend verifies with the PSP
   /// by its own reference; the client never sends a PSP reference.
   Future<RawProcessResponse> completeClientSession(String token, String clientSessionId) async {
-    final body = await _request(
+    final answer = await _send(
       'POST',
       token,
       '/pay/client-session/complete',
-      jsonBody: {'client_session_id': clientSessionId},
+      body: {'client_session_id': clientSessionId},
+      timeout: paymentRequestTimeout,
+      retry: _Retry.payment,
     );
-    return RawProcessResponse.fromJson(body);
+    return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
+  }
+
+  /// `POST /pay/{kind}/verify` with the step's id and [fields] (`code`,
+  /// `pin`, `phone`, `birthday`, or `address`, `city`, `state`, `zip_code`).
+  /// Never retried: on a network error, read the status instead.
+  Future<StepVerifyResult> verifyStep(
+    String token,
+    PaymentStepKind kind,
+    String stepId,
+    Map<String, String> fields,
+  ) async {
+    final answer = await _send(
+      'POST',
+      token,
+      '/pay/${kind.name}/verify',
+      body: {kind.idKey: stepId, ...fields},
+      timeout: paymentRequestTimeout,
+    );
+    return _parse(answer, StepVerifyResult.fromJson);
+  }
+
+  /// `POST /pay/{kind}/resend`. The providers have none: the API answers
+  /// 200 and does nothing.
+  Future<void> resendStep(String token, PaymentStepKind kind, String stepId) =>
+      _send('POST', token, '/pay/${kind.name}/resend', body: {kind.idKey: stepId});
+
+  /// Sandbox 3-D Secure: `POST /pay/3ds/verify`. Accepted codes answer
+  /// HTTP 200 with `code: 202`; a wrong one a 422 — or a 500 today.
+  Future<RawProcessResponse> verifyThreeDs(String token, String threeDsId, String code) async {
+    final answer = await _send(
+      'POST',
+      token,
+      '/pay/3ds/verify',
+      body: {'three_ds_id': threeDsId, 'code': code},
+      timeout: paymentRequestTimeout,
+    );
+    return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
+  }
+
+  /// Sandbox 3-D Secure: `POST /pay/3ds/send` sends a new code. Returns the
+  /// masked email it went to.
+  Future<String?> sendThreeDs(String token, String threeDsId) async {
+    final answer = await _send('POST', token, '/pay/3ds/send', body: {'three_ds_id': threeDsId});
+    return readText(answer.body['masked_email']);
   }
 
   Future<CancelResult> cancel(String token) async {
-    final body = await _request('POST', token, '/pay/cancel', jsonBody: {});
-    return CancelResult(redirectUrl: readString(body['redirect_url']));
+    final answer = await _send('POST', token, '/pay/cancel', body: const {}, retry: _Retry.cancel);
+    return CancelResult(redirectUrl: readText(answer.body['redirect_url']));
   }
 
-  Future<Map<String, dynamic>> _request(
+  /// `POST /pay/broadcasting/auth`: the signature that lets the socket join
+  /// the payment's private channel.
+  Future<String> authorizeChannel(String token, String socketId, String channelName) async {
+    final answer = await _send(
+      'POST',
+      token,
+      '/pay/broadcasting/auth',
+      body: {'socket_id': socketId, 'channel_name': channelName},
+      loading: true,
+    );
+    final auth = readText(answer.body['auth']);
+    if (auth == null) throw WajubError.of('server_error', language: language);
+    return auth;
+  }
+
+  T _parse<T>(_Answer answer, T Function(Map<String, dynamic>) parse) {
+    try {
+      return parse(answer.body);
+    } on FormatException catch (e) {
+      throw WajubError.of(
+        'server_error',
+        language: language,
+        httpStatus: answer.status,
+        apiMessage: 'Unreadable answer: ${e.message}',
+        correlationId: answer.requestId,
+      );
+    }
+  }
+
+  Future<_Answer> _send(
     String method,
     String token,
     String path, {
-    Map<String, dynamic>? jsonBody,
-    Map<String, String> extraHeaders = const {},
+    Map<String, dynamic>? body,
+    Duration timeout = requestTimeout,
+    _Retry retry = _Retry.never,
+    Map<String, String> headers = const {},
+    bool loading = false,
   }) async {
+    final info = await _clientInfo();
+    final encoded = body == null ? null : jsonEncode(body);
     final uri = Uri.parse('${apiUrl.replaceAll(RegExp(r'/+$'), '')}$path');
-    final headers = {
-      'Accept': 'application/json',
-      // AuthenticatePaymentSession (api.wajub) reads this via Laravel's
-      // Request::bearerToken(), which requires the literal "Bearer " prefix —
-      // without it every /pay/* call 401s with "Payment session token required."
-      'Authorization': 'Bearer $token',
-      ...extraHeaders,
-    };
+    for (var attempt = 0;; attempt++) {
+      final request = http.Request(method, uri)
+        ..headers.addAll({
+          // AuthenticatePaymentSession (api.wajub) reads this via Laravel's
+          // Request::bearerToken(), which requires the literal "Bearer " prefix.
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Accept-Language': info.acceptLanguage,
+          'X-Request-Id': uuidV4(_random),
+          'X-Wajub-Client': info.wajubClient,
+          if (info.userAgent != null) 'User-Agent': info.userAgent!,
+          if (encoded != null) 'Content-Type': 'application/json',
+          ...headers,
+        });
+      if (encoded != null) request.body = encoded;
 
-    late http.Response response;
-    if (method == 'GET') {
-      response = await _http.get(uri, headers: headers);
-    } else {
-      headers['Content-Type'] = 'application/json; charset=utf-8';
-      response = await _http.post(
-        uri,
-        headers: headers,
-        body: jsonEncode(jsonBody ?? {}),
+      http.Response response;
+      try {
+        response = await _http.send(request).then(http.Response.fromStream).timeout(timeout);
+      } on TimeoutException {
+        if (_retries(retry, null) && attempt < _maxRetries(retry)) {
+          await Future<void>.delayed(_backoff(attempt));
+          continue;
+        }
+        throw WajubError.of('timeout', language: language);
+      } on WajubError {
+        rethrow;
+      } catch (e) {
+        if (_retries(retry, null) && attempt < _maxRetries(retry)) {
+          await Future<void>.delayed(_backoff(attempt));
+          continue;
+        }
+        throw WajubError.of('network_error', language: language, apiMessage: '$e');
+      }
+
+      final requestId = response.headers['x-request-id'];
+      final status = response.statusCode;
+      final json = _decode(response.body);
+      if (status >= 200 && status < 300) {
+        if (json == null) {
+          throw WajubError.of(
+            'server_error',
+            language: language,
+            httpStatus: status,
+            apiMessage: 'The answer is not JSON.',
+            correlationId: requestId,
+          );
+        }
+        return _Answer(status, json, requestId);
+      }
+
+      final retryAfter = int.tryParse(response.headers['retry-after']?.trim() ?? '');
+      if (_retries(retry, status) && attempt < _maxRetries(retry)) {
+        if (status != 429) {
+          await Future<void>.delayed(_backoff(attempt));
+          continue;
+        }
+        final wait = retryAfter == null ? _backoff(attempt) : Duration(seconds: retryAfter);
+        if (wait <= _maxRetryAfter) {
+          await Future<void>.delayed(wait);
+          continue;
+        }
+      }
+      throw WajubError.fromResponse(
+        status: status,
+        body: json ?? const {},
+        correlationId: requestId,
+        retryAfterHeader: retryAfter,
+        language: language,
+        loading: loading,
       );
     }
+  }
 
-    final correlationId = response.headers['x-request-id'] ?? response.headers['x-trace-id'];
-    final retryAfter = int.tryParse(response.headers['retry-after'] ?? '');
-    final text = response.body;
-    // A proxy's HTML error page is not JSON: read it as an empty body so the
-    // status still maps to a WajubError instead of a FormatException.
-    Map<String, dynamic> body = <String, dynamic>{};
-    if (text.isNotEmpty) {
-      try {
-        body = readMap(jsonDecode(text)) ?? <String, dynamic>{};
-      } on FormatException {
-        if (response.statusCode >= 200 && response.statusCode < 300) rethrow;
-      }
+  static bool _retries(_Retry retry, int? status) => switch (retry) {
+        _Retry.read => status == null || const {408, 429, 500, 502, 503, 504}.contains(status),
+        _Retry.payment => status == null || const {502, 503, 504}.contains(status),
+        _Retry.cancel => status == null,
+        _Retry.never => false,
+      };
+
+  static int _maxRetries(_Retry retry) => retry == _Retry.read ? _maxReadRetries : _maxPostRetries;
+
+  /// `min(1 s × 2^n, 10 s) ± 30 %`.
+  Duration _backoff(int attempt) {
+    final base = min(1000 * pow(2, attempt), 10000).toDouble();
+    final jitter = 1 + (_random.nextDouble() * 0.6 - 0.3);
+    return Duration(milliseconds: (base * jitter).round());
+  }
+
+  /// A proxy's HTML error page is not JSON: read as no body, so the status
+  /// still maps to a [WajubError].
+  static Map<String, dynamic>? _decode(String text) {
+    if (text.trim().isEmpty) return const {};
+    try {
+      return readMap(jsonDecode(text));
+    } on FormatException {
+      return null;
     }
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _mapError(response.statusCode, body, correlationId, retryAfter);
-    }
-    return body;
   }
+}
 
-  WajubError _mapError(
-    int code,
-    Map<String, dynamic> body,
-    String? correlationId,
-    int? retryAfter,
-  ) {
-    final message =
-        readString(body['message'])?.isNotEmpty == true ? readString(body['message'])! : 'Request failed ($code)';
-    final errorCode = readString(body['error_code']) ??
-        switch (code) {
-          402 => 'insufficient_funds',
-          403 => 'blocked',
-          410 => 'session_terminal_expired',
-          422 => 'validation_error',
-          429 => 'rate_limited',
-          401 || 404 => 'session_not_found',
-          >= 500 => 'server_error',
-          _ => 'payment_error',
-        };
-    final details = _flattenErrors(body['errors']);
-    return WajubError.fromHttp(code, message, errorCode, details, correlationId, retryAfter);
-  }
+class _Answer {
+  const _Answer(this.status, this.body, this.requestId);
 
-  Map<String, String> _flattenErrors(dynamic raw) {
-    if (raw is! Map) return {};
-    return raw.map((key, value) {
-      if (value is List && value.isNotEmpty) {
-        return MapEntry(key.toString(), value.first.toString());
-      }
-      return MapEntry(key.toString(), value.toString());
-    });
-  }
-
-  String _idempotencyKey() => 'wajub-${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 32)}';
+  final int status;
+  final Map<String, dynamic> body;
+  final String? requestId;
 }

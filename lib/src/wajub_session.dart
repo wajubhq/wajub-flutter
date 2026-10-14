@@ -1,18 +1,34 @@
+import 'dart:async';
+
+import 'adapters/hosted_redirect.dart';
+import 'adapters/stripe_adapter.dart';
+import 'checkout/present_options.dart';
 import 'client/pay_client.dart';
 import 'mapper/payment_mapper.dart';
 import 'models/models.dart';
 import 'models/payment_result.dart';
-import 'realtime/status_subscriber.dart';
-import 'adapters/hosted_redirect.dart';
-import 'adapters/stripe_adapter.dart';
+import 'models/wajub_error.dart';
+import 'realtime/payment_watcher.dart';
+import 'realtime/pusher_socket.dart';
 
-/// Session-scoped checkout client — mirrors hosted checkout `/pay/*` without WebView.
+/// Session-scoped checkout client — the hosted checkout's `/pay/*` calls,
+/// for apps that draw their own UI. `presentWajubCheckout` drives all of it.
 class WajubSession {
   WajubSession(this._token, {PayClient? client}) : _client = client ?? PayClient();
 
   final String _token;
   final PayClient _client;
   SessionData? _cachedSession;
+
+  /// The language of the [WajubError] messages: `fr` or `en`.
+  String get language => _client.language;
+  set language(String value) => _client.language = value == 'fr' ? 'fr' : 'en';
+
+  /// The session's token, for the payment sheet.
+  String get token => _token;
+
+  /// The HTTP client, for the payment sheet.
+  PayClient get client => _client;
 
   Future<SessionData> loadSession({bool forceRefresh = false}) async {
     if (!forceRefresh && _cachedSession != null) {
@@ -25,10 +41,19 @@ class WajubSession {
 
   Future<SdkConfig> getSdkConfig() => _client.getSdkConfig(_token);
 
-  Future<PaymentResult> payMobileMoney(MobileMoneyInput input) async {
+  /// `GET /pay/status`: the payment's current status. After a crash, read it
+  /// (or ask your server) to learn how a payment ended.
+  Future<PaymentStatusUpdate> status() => _client.getStatus(_token);
+
+  /// [MobileMoneyInput.phone] in E.164 (`+237677123456`); `operator` only for
+  /// an aggregate channel. [idempotencyKey]: one per press of Pay.
+  Future<PaymentResult> payMobileMoney(MobileMoneyInput input, {String? returnUrl, String? idempotencyKey}) async {
     await loadSession();
-    final body = PaymentMapper.buildMobileMoneyRequest(input);
-    final raw = await _client.process(_token, input.channelSlug, body);
+    final body = {
+      ...PaymentMapper.buildMobileMoneyRequest(input),
+      if (returnUrl != null) 'return_url': returnUrl,
+    };
+    final raw = await _client.process(_token, input.channelSlug, body, idempotencyKey: idempotencyKey);
     return PaymentMapper.mapProcessResponse(raw, 'mobile_money');
   }
 
@@ -37,12 +62,13 @@ class WajubSession {
     required String channelSlug,
     required String paymentMethodId,
     String? cardholderName,
+    String? returnUrl,
   }) async {
     await loadSession();
-    final body = buildStripeCardRequest(
-      paymentMethodId: paymentMethodId,
-      cardholderName: cardholderName,
-    );
+    final body = {
+      ...buildStripeCardRequest(paymentMethodId: paymentMethodId, cardholderName: cardholderName),
+      if (returnUrl != null) 'return_url': returnUrl,
+    };
     final raw = await _client.process(_token, channelSlug, body);
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
@@ -52,6 +78,7 @@ class WajubSession {
     required String channelSlug,
     required String publishableKey,
     String? cardholderName,
+    String? returnUrl,
   }) async {
     await StripeAdapter.ensureInitialized(publishableKey);
     final paymentMethodId = await StripeAdapter.createPaymentMethod(cardholderName: cardholderName);
@@ -59,19 +86,21 @@ class WajubSession {
       channelSlug: channelSlug,
       paymentMethodId: paymentMethodId,
       cardholderName: cardholderName,
+      returnUrl: returnUrl,
     );
   }
 
   /// One-tap wallet channel (sdk-config `form`, no `requiredFields`, channel
   /// type `wallet` — e.g. Djamo): returns [PaymentRequiresAction] redirecting
   /// to the wallet's payment page, which opens the wallet app.
-  Future<PaymentResult> payWallet({required String channelSlug}) async {
+  Future<PaymentResult> payWallet({required String channelSlug, String? returnUrl}) async {
     await loadSession();
-    return process(channelSlug, const {});
+    return process(channelSlug, {if (returnUrl != null) 'return_url': returnUrl});
   }
 
-  Future<PaymentResult> process(String channel, Map<String, dynamic> data) async {
-    final raw = await _client.process(_token, channel, data);
+  /// `POST /pay/process` with [data] as given (plus the device signals).
+  Future<PaymentResult> process(String channel, Map<String, dynamic> data, {String? idempotencyKey}) async {
+    final raw = await _client.process(_token, channel, data, idempotencyKey: idempotencyKey);
     return PaymentMapper.mapProcessResponse(raw, _methodType(channel));
   }
 
@@ -82,9 +111,13 @@ class WajubSession {
   Future<PaymentResult> payCardHostedRedirect({
     required String channelSlug,
     Map<String, String> billing = const {},
+    String? returnUrl,
   }) async {
     await loadSession();
-    final data = PaymentMapper.buildHostedCardRequest(billing);
+    final data = {
+      ...PaymentMapper.buildHostedCardRequest(billing),
+      if (returnUrl != null) 'return_url': returnUrl,
+    };
     final raw = await _client.process(_token, channelSlug, data);
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
@@ -94,13 +127,15 @@ class WajubSession {
   /// [PaymentRequiresAction] with [ActionKind.clientSession] and a
   /// [ClientSession]; open its `hostedUrl` (see [handleRedirectAction]) or
   /// launch the PSP's native SDK, then call [completeClientSession].
-  /// Idempotent: calling again returns the same open session.
+  /// Idempotent: calling again returns the same open session. [billing]:
+  /// the other contact fields sdk-config lists in `required_fields`.
   Future<PaymentResult> startClientSession({
     required String channelSlug,
     String? email,
     String? name,
     String? returnUrl,
     bool restart = false,
+    Map<String, String> billing = const {},
   }) async {
     await loadSession();
     final raw = await _client.startClientSession(
@@ -110,6 +145,7 @@ class WajubSession {
       name: name,
       returnUrl: returnUrl,
       restart: restart,
+      billing: billing,
     );
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
@@ -122,6 +158,24 @@ class WajubSession {
     final raw = await _client.completeClientSession(_token, clientSessionId);
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
+
+  /// `POST /pay/{otp,pin,phone,birthday,address}/verify` for the step of a
+  /// [PaymentRequiresAction] ([PaymentRequiresAction.step],
+  /// [PaymentRequiresAction.stepId]). [fields]: `{code}`, `{pin}`, `{phone}`,
+  /// `{birthday: 'YYYY-MM-DD'}`, or `{address, city, state, zip_code}`.
+  Future<StepVerifyResult> verifyStep(PaymentStepKind kind, String stepId, Map<String, String> fields) =>
+      _client.verifyStep(_token, kind, stepId, fields);
+
+  /// Asks for the step again; the providers have no resend, so this does
+  /// nothing visible today.
+  Future<void> resendStep(PaymentStepKind kind, String stepId) => _client.resendStep(_token, kind, stepId);
+
+  /// Sandbox 3-D Secure email code. Throws [WajubError] `invalid_code` on a
+  /// wrong code (the API answers it with a 500 today).
+  Future<void> verifyThreeDs(String threeDsId, String code) => _client.verifyThreeDs(_token, threeDsId, code);
+
+  /// Sandbox 3-D Secure: sends a new code; returns the masked email.
+  Future<String?> sendThreeDs(String threeDsId) => _client.sendThreeDs(_token, threeDsId);
 
   /// Opens redirect / hosted PSP URLs in the system browser (not WebView).
   Future<bool> handleRedirectAction(PaymentResult result) async {
@@ -142,10 +196,69 @@ class WajubSession {
     return result.redirectUrl;
   }
 
-  /// Pusher/Reverb when `echo` is present, otherwise polling.
-  Stream<PaymentResult> watchStatus({Duration interval = const Duration(seconds: 5)}) async* {
-    final session = await loadSession();
-    yield* StatusSubscriber(_client, _token, interval: interval).subscribe(session);
+  /// Follows the payment until it ends: polls `GET /pay/status` and, when
+  /// the session has realtime settings, listens to the payment's channel.
+  /// Delivers a [PaymentProcessing] each time the status changes, then the
+  /// outcome; a session that is no longer readable (`401`, `404`, `410`)
+  /// ends the stream with its [WajubError]. Cancelling the subscription stops
+  /// the watch. [interval] is the base polling interval.
+  Stream<PaymentResult> watchStatus({
+    Duration interval = PaymentWatcher.defaultInterval,
+    RealtimeOptions realtime = const RealtimeOptions(),
+  }) {
+    PaymentWatcher? watcher;
+    var cancelled = false;
+    late final StreamController<PaymentResult> controller;
+
+    Future<void> run() async {
+      final SessionData session;
+      try {
+        session = await loadSession();
+      } catch (error, stack) {
+        controller.addError(error, stack);
+        await controller.close();
+        return;
+      }
+      if (cancelled) return;
+      var transaction = session.transaction;
+      String? lastStatus;
+      watcher = PaymentWatcher(
+        client: _client,
+        token: _token,
+        language: language,
+        interval: interval,
+        realtime: RealtimeEndpoint.resolve(session, realtime),
+        seenProcessing: transaction.status == 'processing' || transaction.status == 'partial',
+        onStatus: (update) {
+          transaction = transaction.copyWith(status: update.status);
+          if (update.status == lastStatus) return;
+          lastStatus = update.status;
+          controller.add(PaymentProcessing(transaction));
+        },
+        onDecision: (decision) {
+          final status = decision.update?.status;
+          if (status != null) transaction = transaction.copyWith(status: status);
+          final error = decision.error;
+          if (decision.verdict == WatchVerdict.success) {
+            controller.add(PaymentComplete(transaction));
+          } else if (error != null && const {'session_not_found', 'session_terminal_expired'}.contains(error.code)) {
+            controller.addError(error);
+          } else if (error != null) {
+            controller.add(PaymentFailed(error: error, transaction: transaction));
+          }
+          unawaited(controller.close());
+        },
+      )..start(pollNow: true);
+    }
+
+    controller = StreamController<PaymentResult>(
+      onListen: () => unawaited(run()),
+      onCancel: () {
+        cancelled = true;
+        watcher?.stop();
+      },
+    );
+    return controller.stream;
   }
 
   String? cardChannelSlug() {

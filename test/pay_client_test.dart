@@ -9,6 +9,8 @@ import 'package:wajub_mobile/src/models/wajub_error.dart';
 import 'package:wajub_mobile/src/wajub_session.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('PayClient client sessions', () {
     late List<http.Request> requests;
 
@@ -81,11 +83,14 @@ void main() {
         'error_code': 'missing_fields',
       });
 
+      // An unknown decline code reads the generic decline text; the API's own
+      // words stay in apiMessage.
       await expectLater(
         client.startClientSession('tok', 'card'),
         throwsA(isA<WajubError>()
             .having((e) => e.code, 'code', 'missing_fields')
-            .having((e) => e.message, 'message', 'Paystack requires an email on every charge.')),
+            .having((e) => e.declineCode, 'declineCode', 'missing_fields')
+            .having((e) => e.apiMessage, 'apiMessage', 'Paystack requires an email on every charge.')),
       );
     });
   });
@@ -132,7 +137,9 @@ void main() {
     );
 
     final process = requests.firstWhere((r) => r.url.path.endsWith('/pay/process'));
-    expect(jsonDecode(process.body), {
+    final body = jsonDecode(process.body) as Map<String, dynamic>;
+    expect((body['data'] as Map).remove('_client'), isA<Map<String, dynamic>>(), reason: 'the device signals');
+    expect(body, {
       'channel': 'card',
       'data': {'email': 'payer@example.test', 'zip_code': '00225'},
     });
@@ -178,7 +185,9 @@ void main() {
     final result = await session.payWallet(channelSlug: 'ci.djamo');
 
     final process = requests.firstWhere((r) => r.url.path.endsWith('/pay/process'));
-    expect(jsonDecode(process.body), {'channel': 'ci.djamo', 'data': <String, dynamic>{}});
+    final body = jsonDecode(process.body) as Map<String, dynamic>;
+    expect((body['data'] as Map).keys, ['_client'], reason: 'nothing but the device signals');
+    expect(body['channel'], 'ci.djamo');
     expect(result, isA<PaymentRequiresAction>());
     expect((result as PaymentRequiresAction).actionUrl, 'https://djamo.ci/?type=payment_confirmation');
   });

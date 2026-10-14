@@ -3,6 +3,8 @@ import '../models/models.dart';
 import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
 
+/// A 2xx answer of `/pay/process`, `/pay/client-session` or
+/// `/pay/client-session/complete`, as sent.
 class RawProcessResponse {
   const RawProcessResponse({
     required this.code,
@@ -13,10 +15,20 @@ class RawProcessResponse {
     this.confirmUrl,
     this.simulatorUrl,
     this.clientSession,
+    this.httpStatus,
+    this.threeDsId,
+    this.threeDsMethod,
+    this.maskedEmail,
+    this.threeDsTimeout,
+    this.stepIds = const {},
+    this.stepHints = const {},
   });
 
   final int code;
   final String status;
+
+  /// Never decide on it: a success may say "Confirm the transaction on your
+  /// phone.".
   final String message;
   final String? action;
   final SessionTransaction? transaction;
@@ -26,25 +38,54 @@ class RawProcessResponse {
   /// Set on `action: "client_session"` (POST /pay/client-session).
   final ClientSession? clientSession;
 
-  factory RawProcessResponse.fromJson(Map<String, dynamic> json) => RawProcessResponse(
-        code: readInt(json['code']) ?? 0,
+  /// The HTTP status the API answered with (`200`, `202`).
+  final int? httpStatus;
+
+  /// `action: "confirm_3ds"` in sandbox: the email code challenge.
+  final String? threeDsId;
+  final String? threeDsMethod;
+  final String? maskedEmail;
+  final int? threeDsTimeout;
+
+  /// `otp_id`, `pin_id`… by step.
+  final Map<PaymentStepKind, String> stepIds;
+
+  /// `otp_masked_contact`, `pin_instruction`… by step.
+  final Map<PaymentStepKind, String> stepHints;
+
+  factory RawProcessResponse.fromJson(Map<String, dynamic> json, {int? httpStatus}) => RawProcessResponse(
+        code: readInt(json['code']) ?? httpStatus ?? 0,
         status: readString(json['status']) ?? '',
         message: readString(json['message']) ?? '',
-        action: readString(json['action']),
+        action: readText(json['action']),
         transaction:
             readMap(json['transaction']) != null ? SessionTransaction.fromJson(readMap(json['transaction'])!) : null,
-        confirmUrl: readString(json['confirm_url']),
-        simulatorUrl: readString(json['simulator_url']),
+        confirmUrl: readText(json['confirm_url']),
+        simulatorUrl: readText(json['simulator_url']),
         clientSession:
             readMap(json['client_session']) != null ? ClientSession.fromJson(readMap(json['client_session'])!) : null,
+        httpStatus: httpStatus,
+        threeDsId: readText(json['three_ds_id']),
+        threeDsMethod: readText(json['three_ds_method']),
+        maskedEmail: readText(json['masked_email']),
+        threeDsTimeout: readInt(json['three_ds_timeout']),
+        stepIds: {
+          for (final kind in PaymentStepKind.values)
+            if (readText(json[kind.idKey]) != null) kind: readText(json[kind.idKey])!,
+        },
+        stepHints: {
+          for (final kind in PaymentStepKind.values)
+            if (readText(json[kind.hintKey]) != null) kind: readText(json[kind.hintKey])!,
+        },
       );
 }
 
 class PaymentMapper {
   static const _successStatuses = {'success', 'successful', 'succeeded', 'paid', 'complete'};
 
-  /// Error code for an `action` this SDK can't perform natively
-  /// (`confirm_otp`, `confirm_pin`, `card_reauth`, …) — see spec/README.md.
+  /// Error code for an `action` this SDK can't perform, or one missing what
+  /// it needs (a `redirect` without `confirm_url`, a `confirm_otp` without
+  /// `otp_id`).
   static const unsupportedActionCode = 'unsupported_action';
 
   /// A `wallet` channel payable with a single tap — nothing to collect,
@@ -74,19 +115,8 @@ class PaymentMapper {
     'zip_code',
   ];
 
-  /// Why a hosted-redirect billing value can't be sent yet, or null.
-  static String? hostedCardFieldError(String field, String? value) {
-    final v = (value ?? '').trim();
-    if (v.isEmpty) return 'Required';
-    if (field == 'email' && !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v)) {
-      return 'Invalid email';
-    }
-    // CinetPay's customer_country is a 2-letter ISO code.
-    if (field == 'country' && !RegExp(r'^[A-Za-z]{2}$').hasMatch(v)) {
-      return 'Use the 2-letter country code';
-    }
-    return null;
-  }
+  /// A plausible email address: something, an `@`, a dotted domain.
+  static bool isEmail(String value) => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value.trim());
 
   /// `data` for a hosted-redirect card charge — flat keys, as sdk-config
   /// names them.
@@ -102,8 +132,12 @@ class PaymentMapper {
   static Map<String, dynamic> buildMobileMoneyRequest(MobileMoneyInput input) => {
         'phone': input.phone,
         'country': input.country.toUpperCase(),
+        if (input.operator != null) 'operator': input.operator,
       };
 
+  /// What one answer leaves to do (spec README §9). Decides on the action
+  /// and `transaction.status`, never on `message`. [methodType]
+  /// (`mobile_money`, `card`, `wallet`) tells a push approval from a wait.
   static PaymentResult mapProcessResponse(RawProcessResponse body, String methodType) {
     final txn = body.transaction;
     if (txn == null) {
@@ -120,81 +154,61 @@ class PaymentMapper {
       return PaymentComplete(txn);
     }
 
-    switch (body.action) {
-      case 'redirect':
-        return PaymentRequiresAction(
-          action: ActionKind.redirect,
-          actionUrl: body.confirmUrl ?? body.simulatorUrl,
-          transaction: txn,
-        );
-      case 'confirm':
-        return PaymentRequiresAction(
-          action: ActionKind.confirm,
-          actionUrl: body.confirmUrl ?? body.simulatorUrl,
-          transaction: txn,
-        );
-      case 'confirm_3ds':
-        return PaymentRequiresAction(
-          action: ActionKind.confirm3ds,
-          actionUrl: body.confirmUrl ?? body.simulatorUrl,
-          transaction: txn,
-        );
-      case 'client_session':
-        final clientSession = body.clientSession;
-        if (clientSession != null) {
-          return PaymentRequiresAction(
-            action: ActionKind.clientSession,
-            actionUrl: clientSession.hostedUrl,
-            transaction: txn,
-            clientSession: clientSession,
-          );
-        }
-    }
-
-    // Any other non-null action is a step this SDK can't perform natively.
-    // Mapping it to processing would leave the payer on an endless spinner.
     final action = body.action;
-    if (action != null) {
-      return PaymentFailed(
-        error: WajubError(
-          type: WajubErrorType.paymentError,
-          message: 'This payment requires a step the SDK cannot handle natively ($action).',
-          code: unsupportedActionCode,
-        ),
-        transaction: txn,
-      );
-    }
+    if (action != null) return _mapAction(action, body, txn);
 
-    if (methodType == 'mobile_money') {
+    final context = txn.processingContext;
+    if (context?.isUssd ?? false) {
+      return PaymentProcessing(txn, instruction: context?.payerInstruction, kind: ProcessingKind.ussd);
+    }
+    if (methodType == 'mobile_money' || (context?.isMobileMoney ?? false)) {
       return PaymentRequiresAction(
         action: ActionKind.pushApproval,
         actionUrl: body.confirmUrl,
         transaction: txn.copyWith(
-          processingContext: ProcessingContext(
-            payerInstruction: txn.processingContext?.payerInstruction,
-          ),
+          processingContext: context ?? const ProcessingContext(isMobileMoney: true),
         ),
       );
     }
 
-    return PaymentProcessing(txn, instruction: txn.processingContext?.payerInstruction);
+    return PaymentProcessing(txn, instruction: context?.payerInstruction);
   }
 
-  static PaymentResult mapStatusToResult(String status, SessionTransaction transaction) {
-    final normalized = status.toLowerCase();
-    if (_successStatuses.contains(normalized)) {
-      return PaymentComplete(transaction);
+  static PaymentResult _mapAction(String action, RawProcessResponse body, SessionTransaction txn) {
+    final url = body.confirmUrl ?? body.simulatorUrl;
+    switch (action) {
+      case 'redirect' when url != null:
+        return PaymentRequiresAction(action: ActionKind.redirect, actionUrl: url, transaction: txn);
+      case 'confirm' when url != null:
+        return PaymentRequiresAction(action: ActionKind.confirm, actionUrl: url, transaction: txn);
+      case 'confirm_3ds' when url != null:
+        return PaymentRequiresAction(action: ActionKind.confirm3ds, actionUrl: url, transaction: txn);
+      case 'confirm_3ds' when body.threeDsId != null:
+        return PaymentRequiresAction(
+          action: ActionKind.confirm3ds,
+          transaction: txn,
+          stepId: body.threeDsId,
+          hint: body.maskedEmail,
+          timeoutSeconds: body.threeDsTimeout,
+        );
+      case 'client_session' when body.clientSession != null:
+        return PaymentRequiresAction(
+          action: ActionKind.clientSession,
+          actionUrl: body.clientSession!.hostedUrl,
+          transaction: txn,
+          clientSession: body.clientSession,
+        );
     }
-    if (const {'failed', 'cancelled', 'expired'}.contains(normalized)) {
-      return PaymentFailed(
-        error: WajubError(
-          type: WajubErrorType.paymentError,
-          message: status,
-          code: normalized,
-        ),
-        transaction: transaction,
-      );
+    final step = PaymentStepKind.fromAction(action);
+    final stepId = step == null ? null : body.stepIds[step];
+    if (step != null && stepId != null) {
+      return PaymentRequiresAction(action: step.action, transaction: txn, stepId: stepId, hint: body.stepHints[step]);
     }
-    return PaymentProcessing(transaction);
+    // An action this SDK can't perform, or one without what it needs.
+    // Mapping it to processing would leave the payer on an endless spinner.
+    return PaymentFailed(
+      error: WajubError.of(unsupportedActionCode, apiMessage: 'Unsupported payment action: $action'),
+      transaction: txn,
+    );
   }
 }

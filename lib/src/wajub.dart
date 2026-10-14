@@ -1,5 +1,10 @@
+import 'package:flutter/widgets.dart';
+
+import 'checkout/checkout_types.dart';
+import 'checkout/present_options.dart';
 import 'client/pay_client.dart';
 import 'wajub_session.dart';
+import 'widgets/present.dart';
 
 /// Entry point for the Wajub Flutter SDK.
 class Wajub {
@@ -17,6 +22,10 @@ class Wajub {
   /// Creates a session client from the backend `authorization_token`.
   static WajubSession createSession(String authorizationToken, {PayClient? client}) =>
       WajubSession(authorizationToken, client: client ?? PayClient());
+
+  /// [presentWajubCheckout]: the payment sheet, resolved once it closes.
+  static Future<CheckoutResult> present(BuildContext context, PresentOptions options) =>
+      presentWajubCheckout(context, options);
 }
 
 /// @deprecated Use [Wajub] instead.

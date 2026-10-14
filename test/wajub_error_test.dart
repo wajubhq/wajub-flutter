@@ -3,9 +3,10 @@ import 'package:wajub_mobile/src/models/wajub_error.dart';
 
 void main() {
   group('WajubError.fromHttp', () {
-    test('reads an ended session (410) as an authentication error the payer cannot retry', () {
+    test('reads an ended session (410) as an invalid request the payer cannot retry', () {
+      // 1.5 said authenticationError; the spec's type for a 410 is invalid_request_error.
       final error = WajubError.fromHttp(410, 'Session expired', 'session_expired', const {}, null, null);
-      expect(error.type, WajubErrorType.authenticationError);
+      expect(error.type, WajubErrorType.invalidRequestError);
       expect(error.retryable, isFalse);
     });
 

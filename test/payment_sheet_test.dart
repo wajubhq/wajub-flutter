@@ -9,11 +9,14 @@ import 'package:wajub_mobile/src/models/payment_result.dart';
 import 'package:wajub_mobile/src/wajub_session.dart';
 import 'package:wajub_mobile/src/widgets/payment_sheet.dart';
 
+import 'support/fake_api.dart';
+
 /// A session whose API answers the sheet's two reads, and records every call.
 WajubSession fakeSession(List<http.Request> calls, {String locale = 'en'}) {
   return WajubSession(
     'tok',
     client: PayClient(
+      clientInfo: () async => testClientInfo,
       httpClient: MockClient((request) async {
         calls.add(request);
         final path = request.url.path;
@@ -70,7 +73,14 @@ Future<void> openSheet(
     ),
   ));
   await tester.tap(find.text('open'));
-  await tester.pumpAndSettle();
+  await settle(tester);
+}
+
+/// The sheet's loader and spinners never settle: pump through the
+/// transitions instead.
+Future<void> settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
 }
 
 void main() {
@@ -81,7 +91,7 @@ void main() {
     await openSheet(tester, fakeSession(calls), results: results, cancels: cancels);
 
     await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
+    await settle(tester);
 
     expect(cancels, ['cancelled']);
     expect(results, isEmpty);
@@ -94,7 +104,7 @@ void main() {
     await openSheet(tester, fakeSession(calls), results: [], cancels: cancels);
 
     await tester.tapAt(const Offset(10, 10)); // the barrier above the sheet
-    await tester.pumpAndSettle();
+    await settle(tester);
 
     expect(cancels, ['cancelled']);
     expect(calls.map((r) => r.url.path), contains('/pay/cancel'));
@@ -103,10 +113,10 @@ void main() {
   testWidgets('the sheet speaks the payment\'s language, and the one asked for first', (tester) async {
     await openSheet(tester, fakeSession([], locale: 'fr'), results: [], cancels: []);
     expect(find.text('Payer avec Wajub'), findsOneWidget);
-    expect(find.text('Numéro de téléphone'), findsOneWidget);
+    expect(find.text('Numéro Mobile Money'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
+    await settle(tester);
 
     await openSheet(tester, fakeSession([], locale: 'fr'), locale: 'en', results: [], cancels: []);
     expect(find.text('Pay with Wajub'), findsOneWidget);
