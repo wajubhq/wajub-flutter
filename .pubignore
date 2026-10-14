@@ -1,0 +1,17 @@
+# pub reads this file instead of .gitignore: keep both lists in step.
+.dart_tool/
+.packages
+build/
+pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+
+.env
+.env.local
+
+.DS_Store
+*.swp
+
+# The spec's fixtures and vectors are for this package's own tests; the
+# runtime copy of the Mobile Money tables ships in assets/wajub/.
+test/fixtures/
