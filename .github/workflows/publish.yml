@@ -1,0 +1,31 @@
+# Publishes to pub.dev when a tag vX.Y.Z is pushed, with GitHub's OIDC token:
+# no pub.dev credential is stored anywhere. One-time setup on pub.dev, package
+# admin page → Automated publishing → GitHub Actions: repository
+# wajubhq/wajub-flutter, tag pattern v{{version}}.
+name: Publish to pub.dev
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pub.dev
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches pubspec version
+        run: |
+          version=$(sed -n 's/^version: *//p' pubspec.yaml)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "pubspec.yaml says $version, tag is $GITHUB_REF_NAME"; exit 1; }
+      # Sets up the OIDC exchange `pub publish` uses (dart-lang's documented
+      # route for Flutter packages).
+      - uses: dart-lang/setup-dart@v1
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter pub publish --force
