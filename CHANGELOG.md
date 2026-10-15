@@ -12,10 +12,12 @@
   `onComplete`. A callback that throws no longer breaks the sheet.
 - The sheet loads the session and the SDK configuration in parallel behind a skeleton (or a spinner,
   `loader`), and reports `ready_timeout` with a Retry button when the payment has not loaded after `readyTimeout`
-  (15 s). A load that fails on the network offers Retry too. An already paid payment opens on the success screen
+  (15 s). A load that fails on the network offers Retry too, and so does a payment with only cards or wallets
+  whose SDK configuration cannot be read (`load_error`, never `no_payment_method`). An already paid payment opens on the success screen
   instead of a form, a failed, cancelled or expired one on a "this payment has ended" notice
   (`session_terminal_failed`, `session_terminal_cancelled`, `session_terminal_expired`), and one still processing
-  on the approval or waiting screen it was on. Both expired-session `410`s read `session_terminal_expired`.
+  on the approval or waiting screen it was on — each at once, from the session alone, without waiting for the SDK
+  configuration. Both expired-session `410`s read `session_terminal_expired`.
 - Mobile Money follows the web checkout: a country selector, the operators of the `cm.mobile` aggregate listed one
   by one with their logos (a brand badge when a logo is missing or does not load), operator detection from the
   number's prefix that preselects until the payer picks by hand, a refusal of a number of another operator before
@@ -48,7 +50,7 @@
   plain WebSocket; `PresentOptions.realtime` overrides the host, port and TLS, or turns realtime off. The status
   is also polled every 5 s (15 s while the socket is joined), slower after 2 minutes without a change, backing off
   on errors, for at most 15 minutes from the press of Pay timed on the phone's monotonic clock (never against
-  `expires_at` or the device's time), and stops on `401`, `403`, `404` and `410`. `pusher_channels_flutter` is no
+  `expires_at` or the device's time; so is the slow-down), and stops on `401`, `403`, `404` and `410`. `pusher_channels_flutter` is no
   longer a dependency.
 - Every call has a 10 s connect timeout and a 30 s (60 s for payments) request timeout. Reads are retried on
   network errors, timeouts, `408`, `429` (when `Retry-After` is at most 10 s) and `5xx`; `POST /pay/process` is
@@ -66,7 +68,9 @@
 - Every call sends `X-Wajub-Client` (`wajub-flutter/1.6.0 (android 15)`), a fresh `X-Request-Id`, the device's
   languages in `Accept-Language`, and a `User-Agent` ending with `X-Wajub-Client`; payments send the device
   signals the API's risk scoring reads (`data._client`: time zone, language, screen, colour depth, and a
-  fingerprint derived from a random id kept for the install; a failed read of that id never replaces it).
+  fingerprint derived from a random id kept for the install; a failed read of that id never replaces it). No call
+  waits on these plugins: they are read in the background, and the calls before carry what is known without them,
+  so a widget test with a `MockClient` and no plugin mocks gets past the loader as in 1.5.
 - `WajubError` gains Wajub.js's catalogue: `message` is the payer's text in the sheet's language, the API's own in
   `apiMessage`, with `httpStatus`, `correlationId` (the response's `X-Request-Id`), `blockReference`,
   `attemptsRemaining`, `toMap()` and `WajubError.fromStep()`. The errors built from API answers type a `410` as an
@@ -87,11 +91,12 @@
 - Only the payer's own ways out — the close button, a swipe down, back, the barrier — cancel an unpaid payment on a
   dismiss. A page of your app popping or replacing the sheet settles it as `host_gone` and never cancels, and a
   sheet presented from a context no longer mounted resolves `host_gone` at once. A new sheet may open as soon as
-  the last one is gone, and a success screen closes even under a page your app pushed.
+  the last one settles — from `onComplete` too, whichever way it closed — and a success screen closes even under a
+  page your app pushed.
 - `showWajubPaymentSheet` and `PaymentSheet` are deprecated. They keep their callbacks and their 1.5 meaning —
   `PaymentSheet.onPaymentStarted` when the payer submits, `onCancel`/`onDismiss` when the payment could not load,
   `PaymentProcessing` with the last transaction known for a payment still running, a sheet stacked over an open
-  one rather than refused — and now draw the new sheet, reporting the outcome once the sheet closes (see the
+  one rather than refused, no `/pay/cancel` once a payment was submitted — and now draw the new sheet, reporting the outcome once the sheet closes (see the
   README's migration notes).
 - `PresentOptions.stripe` (`StripeOptions(appPublishableKey:)`) puts your app's own Stripe key back when the sheet
   closes after its card form, which sets the merchant's.

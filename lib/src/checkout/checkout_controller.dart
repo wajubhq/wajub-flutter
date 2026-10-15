@@ -116,6 +116,16 @@ class CheckoutController extends ChangeNotifier {
   /// `PaymentSheet.onPaymentStarted`.
   VoidCallback? onSubmit;
 
+  /// 1.5's rule for `showWajubPaymentSheet`: closing the sheet cancels the
+  /// payment only if nothing was ever submitted.
+  bool cancelOnlyBeforeSubmit = false;
+  var _submitted = false;
+
+  /// Called first when the sheet settles, before the route closes and the
+  /// callbacks run: the presenter frees itself, so `onComplete` may present
+  /// the next sheet.
+  VoidCallback? onSettling;
+
   static Future<String> _stripeElements(String publishableKey, String? cardholderName) async {
     await StripeAdapter.ensureInitialized(publishableKey);
     return StripeAdapter.createPaymentMethod(cardholderName: cardholderName);
@@ -297,7 +307,10 @@ class CheckoutController extends ChangeNotifier {
 
   /// Settles exactly once, when the sheet closes.
   Future<CheckoutResult> get result => _result.future;
-  bool get settled => _result.isCompleted;
+  bool get settled => _settling || _result.isCompleted;
+
+  /// [_finish] began: nothing settles twice, even from a callback.
+  var _settling = false;
 
   var _generation = 0;
 
@@ -430,7 +443,11 @@ class CheckoutController extends ChangeNotifier {
     }
 
     final sessionLoad = session.loadSession(forceRefresh: true);
-    final configLoad = session.getSdkConfig().then<SdkConfig?>((c) => c, onError: (Object _) => null);
+    _sdkConfigFailed = false;
+    final configLoad = session.getSdkConfig().then<SdkConfig?>((c) => c, onError: (Object _) {
+      _sdkConfigFailed = true;
+      return null;
+    });
     final dataLoad = _loadMobileMoneyData().then<MobileMoneyData?>((d) => d, onError: (Object _) => null);
     SessionData loaded;
     try {
@@ -451,6 +468,25 @@ class CheckoutController extends ChangeNotifier {
     _transaction = loaded.transaction;
     // A refusal an earlier try left on the payment is not this sheet's news.
     _lastErrorCode ??= loaded.transaction.errorCode;
+    if (!_payable(loaded.transaction.status)) {
+      // Paid, ended or processing: the session alone says what to show, at
+      // once. sdk-config and the Mobile Money tables, when they come, only
+      // add the methods a "Try again" may need.
+      _readyTimer?.cancel();
+      session.language = language;
+      _error = null;
+      _start(loaded);
+      unawaited(Future.wait<Object?>([configLoad, dataLoad]).then((loads) {
+        if (generation != _generation || settled) return;
+        _sdkConfig = loads[0] as SdkConfig?;
+        _mobileMoneyData = loads[1] as MobileMoneyData?;
+        final family = _method?.family;
+        _methods = buildMethods(loaded, _sdkConfig);
+        if (family != null) _method = _methods.where((m) => m.family == family).firstOrNull ?? _method;
+        notifyListeners();
+      }));
+      return;
+    }
     final config = await configLoad;
     final data = await dataLoad;
     if (generation != _generation || settled) return;
@@ -461,6 +497,13 @@ class CheckoutController extends ChangeNotifier {
     _error = null;
     _start(loaded);
   }
+
+  /// A status the payer may still pay from: the methods (and so sdk-config)
+  /// are needed before anything shows.
+  static bool _payable(String status) => const {'pending', 'unknown'}.contains(status.toLowerCase());
+
+  /// sdk-config could not be read for the load under way.
+  var _sdkConfigFailed = false;
 
   /// Retry on the error view: starts the load again, a new timer included.
   Future<void> retryLoad() => load();
@@ -510,7 +553,9 @@ class CheckoutController extends ChangeNotifier {
         _restore(transaction);
       default:
         if (_methods.isEmpty) {
-          _loadError(WajubError.of('no_payment_method', language: language));
+          // Without sdk-config the cards and wallets cannot be offered: a
+          // load error to retry, not "no payment method".
+          _loadError(WajubError.of(_sdkConfigFailed ? 'load_error' : 'no_payment_method', language: language));
           return;
         }
         _becomeReady();
@@ -849,6 +894,7 @@ class CheckoutController extends ChangeNotifier {
   /// A press of Pay: a new attempt, in flight until its answer.
   int _beginAttempt() {
     final attempt = ++_attempt;
+    _submitted = true;
     _attemptClock
       ..reset()
       ..start();
@@ -1715,7 +1761,9 @@ class CheckoutController extends ChangeNotifier {
   /// result stays the failure the payer saw and releases the order.
   Future<void> _leave(CheckoutResult result, {required bool routeGone}) async {
     final releases = result is CheckoutFailed && _screen == CheckoutScreen.failed && !_endedAtLoad;
-    if (!((result is CheckoutCancelled || releases) && options.cancelOnDismiss && _mayCancel && !_isFinal)) {
+    final legacyKeeps = cancelOnlyBeforeSubmit && _submitted;
+    if (legacyKeeps ||
+        !((result is CheckoutCancelled || releases) && options.cancelOnDismiss && _mayCancel && !_isFinal)) {
       _finish(result, routeGone: routeGone);
       return;
     }
@@ -1783,13 +1831,17 @@ class CheckoutController extends ChangeNotifier {
     _threeDsTimer?.cancel();
     _watcher?.stop();
     _generation++;
+    _settling = true;
+    // The presenter is free and the sheet's route on its way out before the
+    // callbacks run: onComplete may present the next sheet.
+    onSettling?.call();
+    if (!routeGone) onClose?.call();
     if (result is CheckoutCancelled) {
       final event = CancelEvent(reason: result.reason, redirectUrl: result.redirectUrl);
       _call(() => _callbacks.onCancel?.call(event));
     }
     _call(() => _callbacks.onComplete?.call(result));
     _result.complete(result);
-    if (!routeGone) onClose?.call();
     notifyListeners();
     final appKey = options.stripe.appPublishableKey;
     if (_stripeKeySet && appKey != null) {

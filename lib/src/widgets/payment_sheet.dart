@@ -83,8 +83,9 @@ class _PaymentSheetState extends State<PaymentSheet> {
 /// closed while it was still running. [onCancel] is called when the payer
 /// closed the sheet (the close button, a swipe down, the back button) or
 /// cancelled before any payment — the payment is then also cancelled on
-/// Wajub (`/pay/cancel`), as the hosted checkout does — and, as in 1.x, when
-/// the payment could not load.
+/// Wajub (`/pay/cancel`), as the hosted checkout does, but never once the
+/// payer submitted one, as in 1.x — and, as in 1.x, when the payment could
+/// not load.
 ///
 /// [locale] (`fr` or `en`) picks the sheet's language; without it the sheet
 /// follows the payment's own.
@@ -96,8 +97,10 @@ Future<void> showWajubPaymentSheet({
   VoidCallback? onCancel,
   String? locale,
 }) async {
+  // 1.5's rule: closing cancels the payment only when nothing was submitted.
   final controller =
-      CheckoutController(session: session, options: PresentOptions(sessionToken: session.token, locale: locale));
+      CheckoutController(session: session, options: PresentOptions(sessionToken: session.token, locale: locale))
+        ..cancelOnlyBeforeSubmit = true;
   // 1.x stacked a second sheet rather than refusing it: so does this one.
   final result = await presentCheckout(context, controller, exclusive: false);
   final legacy = legacyResult(result, controller);

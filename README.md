@@ -97,7 +97,11 @@ the open sheet alone.
 
 - **Loads** the session and the SDK configuration in parallel, behind a skeleton in the merchant's colours. An
   already paid payment opens on the success screen; a failed, cancelled or expired one on a "this payment has
-  ended" notice; one still processing (the app was killed during an approval) on the screen it was on.
+  ended" notice; one still processing (the app was killed during an approval) on the screen it was on — each at
+  once, from the session alone, without waiting for the SDK configuration. When the configuration cannot be read,
+  Mobile Money still shows; a payment with only cards or wallets shows "We couldn't load the payment" with Retry.
+- **Never waits on the device's plugins**: the device signals are read in the background; until they are, the
+  calls carry what the app knows without them.
 - **Offers** the payment's methods in the API's order: Mobile Money (one form for every operator), the card when
   its provider can be paid on mobile, and one-tap wallets (Djamo). Methods outside their amount limits show
   disabled with the limit.
@@ -167,7 +171,8 @@ PresentOptions(
 
 All optional, called on the UI thread in this order for a payment:
 `onReady` → `onStateChange`… → `onPaymentStarted`, `onRedirect` → `onSuccess` / `onError` / `onCancel` →
-`onComplete` (exactly once). A callback that throws does not break the sheet.
+`onComplete` (exactly once). A callback that throws does not break the sheet. The sheet is released before the
+callbacks run: `onComplete` may present the next one.
 
 ```dart
 CheckoutCallbacks(

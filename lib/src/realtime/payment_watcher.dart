@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:clock/clock.dart';
-
 import '../client/pay_client.dart';
 import '../errors/error_catalogue.dart';
 import '../models/models.dart';
@@ -139,13 +137,17 @@ class PaymentWatcher {
 
   PusherSocket? _socket;
   Timer? _timer;
-  DateTime? _nextPoll;
+
+  /// Monotonic time since [start]: the slow-down and the next poll are
+  /// measured on it, never on the wall clock.
+  late final Stopwatch _clock = _client.newStopwatch();
+  Duration? _nextPoll;
   Timer? _capTimer;
   var _running = false;
   var _polling = false;
   var _failures = 0;
   late var _current = interval;
-  late DateTime _lastChange;
+  var _lastChange = Duration.zero;
 
   /// The status as last known: `processing` once the attempt was seen so,
   /// so that reading it again is no change.
@@ -158,7 +160,10 @@ class PaymentWatcher {
   void start({bool pollNow = false}) {
     if (_running) return;
     _running = true;
-    _lastChange = clock.now();
+    _clock
+      ..reset()
+      ..start();
+    _lastChange = _clock.elapsed;
     final left = _cap;
     if (left != null) {
       if (left <= Duration.zero) {
@@ -207,14 +212,14 @@ class PaymentWatcher {
   void _schedule(Duration delay) {
     _timer?.cancel();
     if (!_running) return;
-    _nextPoll = clock.now().add(delay);
+    _nextPoll = _clock.elapsed + delay;
     _timer = Timer(delay, () => unawaited(_poll()));
   }
 
   /// [_schedule], only when it reads sooner than planned.
   void _scheduleAtMost(Duration delay) {
     final planned = _nextPoll;
-    if (planned != null && !clock.now().add(delay).isBefore(planned)) return;
+    if (planned != null && _clock.elapsed + delay >= planned) return;
     _schedule(delay);
   }
 
@@ -270,7 +275,7 @@ class PaymentWatcher {
     if (update.status == null) return false;
     if (update.status != _lastStatus) {
       _lastStatus = update.status;
-      _lastChange = clock.now();
+      _lastChange = _clock.elapsed;
       _current = interval;
     }
     final decision = decideStatus(update, seenProcessing: seenProcessing, language: language);
@@ -291,7 +296,7 @@ class PaymentWatcher {
 
   Duration _nextDelay() {
     if (_socket?.subscribed ?? false) return withSocket;
-    if (clock.now().difference(_lastChange) >= slowAfter) {
+    if (_clock.elapsed - _lastChange >= slowAfter) {
       final slower = _current * 1.5;
       _current = slower > maxInterval ? maxInterval : slower;
       return _current < interval ? interval : _current;

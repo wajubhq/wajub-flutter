@@ -36,6 +36,38 @@ void main() {
       expect(checkout.controller.screen, CheckoutScreen.form);
       checkout.end();
     });
+
+    // Without Mobile Money, a failed sdk-config leaves nothing to offer yet:
+    // a load error to retry, never no_payment_method.
+    final cardOnly = fixtureBody('session-cm-aggregate.json');
+    cardOnly['channels'] = [
+      for (final channel in cardOnly['channels'] as List)
+        if ((channel as Map)['type'] == 'card') channel,
+    ];
+    final walletOnly = fixtureBody('session-ci-xof-wallets.json');
+    walletOnly['channels'] = [
+      for (final channel in walletOnly['channels'] as List)
+        if ((channel as Map)['type'] == 'wallet') channel,
+    ];
+    for (final (name, body, config) in [
+      ('card only', cardOnly, 'sdk-config-cm-stripe.json'),
+      ('wallets only', walletOnly, 'sdk-config-ci-wallets.json'),
+    ]) {
+      for (final failure in [const FakeAnswer.network(), FakeAnswer.fixture('error-500-production.json')]) {
+        virtual((async) {
+          final api = loading(FakeAnswer(200, body), config: [failure, failure, failure, failure, config]);
+          final checkout = Checkout(async, api);
+          checkout.elapse(const Duration(seconds: 14));
+          expect(checkout.controller.screen, CheckoutScreen.loadError, reason: name);
+          expect(checkout.controller.error?.code, 'load_error', reason: name);
+          expect(checkout.controller.error?.retryable, isTrue);
+          expect(checkout.recorder.loadError?.code, 'load_error');
+          checkout.run(checkout.controller.retryLoad);
+          expect(checkout.controller.screen, CheckoutScreen.form, reason: 'Retry reloads: $name');
+          checkout.end();
+        });
+      }
+    }
   });
 
   test('LD-02 maps unknown sessions to session_not_found', () {
@@ -72,6 +104,15 @@ void main() {
   });
 
   test('LD-04 shows an already paid session as success', () {
+    // From the session alone, at once: sdk-config hanging changes nothing.
+    virtual((async) {
+      final checkout = Checkout(async, loading('session-terminal-succeeded.json', config: const FakeAnswer.hang()),
+          autoCloseSuccess: Duration.zero);
+      expect(checkout.controller.screen, CheckoutScreen.success);
+      checkout.elapse(const Duration(seconds: 20));
+      expect(checkout.recorder.loadError, isNull, reason: 'no ready_timeout');
+      checkout.end();
+    });
     virtual((async) {
       final checkout = Checkout(async, loading('session-terminal-succeeded.json'));
       expect(checkout.controller.screen, CheckoutScreen.success);
@@ -91,6 +132,20 @@ void main() {
       'session-terminal-expired.json': ('session_terminal_expired', CheckoutState.expired),
     };
     cases.forEach((name, expected) {
+      for (final config in [
+        const FakeAnswer.hang(),
+        FakeAnswer.fixture('error-500-production.json'),
+        FakeAnswer.fixture('sdk-config-cm-stripe.json'),
+      ]) {
+        // From the session alone, at once, whatever sdk-config does.
+        virtual((async) {
+          final checkout = Checkout(async, loading(name, config: config));
+          expect(checkout.controller.state, expected.$2, reason: '$name ${config.status}');
+          checkout.elapse(const Duration(seconds: 20));
+          expect(checkout.recorder.loadError?.code, expected.$1, reason: 'not ready_timeout');
+          checkout.end();
+        });
+      }
       virtual((async) {
         final checkout = Checkout(async, loading(name));
         final (code, state) = expected;
@@ -106,6 +161,18 @@ void main() {
   });
 
   test('LD-06 restores a pending approval', () {
+    for (final config in [const FakeAnswer.hang(), FakeAnswer.fixture('error-500-production.json')]) {
+      // From the session alone, at once: sdk-config only adds methods later.
+      virtual((async) {
+        final api = loading('session-processing-mobile-money.json', config: config, status: 'status-processing.json');
+        final checkout = Checkout(async, api);
+        expect(checkout.controller.state, CheckoutState.approvalRequired);
+        checkout.elapse(const Duration(seconds: 20));
+        expect(checkout.controller.state, CheckoutState.approvalRequired);
+        expect(checkout.recorder.loadError, isNull, reason: 'no ready_timeout');
+        checkout.end();
+      });
+    }
     for (final name in ['session-processing-mobile-money.json', 'session-processing-mobile-money-live.json']) {
       virtual((async) {
         final api = loading(name, status: 'status-processing.json');

@@ -43,9 +43,12 @@ class PayClient {
     @visibleForTesting Random? random,
     @visibleForTesting Stopwatch Function()? stopwatch,
   })  : _http = httpClient ?? createHttpClient(connectTimeout),
-        _clientInfo = clientInfo ?? ClientInfo.current,
+        // Never waits on a platform channel (ClientInfo.now).
+        _clientInfo = clientInfo ?? _nowInfo,
         _random = random ?? Random(),
         _newStopwatch = stopwatch ?? Stopwatch.new;
+
+  static Future<ClientInfo> _nowInfo() async => ClientInfo.now();
 
   final http.Client _http;
   final Future<ClientInfo> Function() _clientInfo;
@@ -72,6 +75,10 @@ class PayClient {
   /// device's monotonic clock. Null before any.
   @internal
   Duration? sinceSent(String path) => _sent[path]?.elapsed;
+
+  /// A stopwatch on the device's monotonic clock (the tests' virtual one).
+  @internal
+  Stopwatch newStopwatch() => _newStopwatch();
 
   /// The language of the [WajubError] messages: `fr` or `en`. The device's
   /// until the payment sheet sets the payment's.

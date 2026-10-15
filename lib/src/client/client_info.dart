@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show PlatformDispatcher, Size;
 
@@ -52,6 +53,8 @@ class ClientInfo {
 
   static const _installIdKey = 'wajub_mobile.install_id';
   static Future<ClientInfo>? _current;
+  static ClientInfo? _known;
+  static ClientInfo? _partial;
   static String? _volatileInstallId;
 
   /// `wajub-flutter/1.6.0 (android 15)`.
@@ -90,13 +93,28 @@ class ClientInfo {
         'client': wajubClient,
       };
 
-  /// This device's info, read once per process.
-  static Future<ClientInfo> current() => _current ??= _read();
+  /// This device's info, read once per process (it asks platform plugins).
+  static Future<ClientInfo> current() => _current ??= _read().then((info) => _known = info);
+
+  /// This device's info without waiting on any platform channel, for the
+  /// requests: what [current] read, once it has. The first call starts that
+  /// read; until it lands (a few milliseconds in an app, never in a widget
+  /// test that does not run real async work) the requests carry what Dart
+  /// knows alone: no OS version, the time zone's abbreviation, and a
+  /// fingerprint of this run.
+  static ClientInfo now() {
+    final known = _known;
+    if (known != null) return known;
+    unawaited(current().then((_) {}, onError: (Object _) {}));
+    return _partial ??= _withoutPlugins();
+  }
 
   /// Forgets what [current] read, as a restart of the app would.
   @visibleForTesting
   static void reset() {
     _current = null;
+    _known = null;
+    _partial = null;
     _volatileInstallId = null;
   }
 
@@ -132,6 +150,20 @@ class ClientInfo {
       locales: [for (final locale in dispatcher.locales) locale.toLanguageTag()],
       screen: _screen(dispatcher),
       fingerprint: results[2],
+      platformUserAgent: _userAgent(),
+    );
+  }
+
+  static ClientInfo _withoutPlugins() {
+    final dispatcher = PlatformDispatcher.instance;
+    final id = _volatileInstallId ??= uuidV4();
+    return ClientInfo(
+      platform: _platformName(),
+      osVersion: '',
+      timezone: DateTime.now().timeZoneName,
+      locales: [for (final locale in dispatcher.locales) locale.toLanguageTag()],
+      screen: _screen(dispatcher),
+      fingerprint: sha256.convert(utf8.encode('device:$id')).toString(),
       platformUserAgent: _userAgent(),
     );
   }

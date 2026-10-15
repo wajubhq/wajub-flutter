@@ -482,19 +482,21 @@ void main() {
       expect((checkout.result as CheckoutCancelled).reason, CancelReason.dismissed);
       expect(api.calls('/pay/cancel'), isEmpty, reason: 'the session had not answered');
     });
-    for (final (session, expected, cancels) in [
-      ('session-processing-mobile-money.json', CheckoutProcessing, 0),
-      ('session-cm-aggregate.json', CheckoutCancelled, 1),
+    for (final (session, expected, cancels, screen) in [
+      ('session-processing-mobile-money.json', CheckoutProcessing, 0, CheckoutScreen.approval),
+      ('session-cm-aggregate.json', CheckoutCancelled, 1, CheckoutScreen.loading),
     ]) {
       virtual((async) {
-        // The session answered, sdk-config not yet: its status decides at once.
+        // The session answered, sdk-config not yet: its status decides at
+        // once (a processing payment is restored without sdk-config).
         final api = FakeApi(routes: {
           'GET /pay/session': session,
           'GET /pay/sdk-config': FakeAnswer.fixture('sdk-config-cm-stripe.json', delay: const Duration(seconds: 5)),
+          'GET /pay/status': 'status-processing.json',
           'POST /pay/cancel': 'cancel-200.json',
         });
         final checkout = Checkout(async, api);
-        expect(checkout.controller.screen, CheckoutScreen.loading);
+        expect(checkout.controller.screen, screen, reason: session);
         checkout.run(checkout.controller.dismiss);
         expect(checkout.result.runtimeType, expected, reason: session);
         expect(api.calls('/pay/cancel'), hasLength(cancels), reason: session);

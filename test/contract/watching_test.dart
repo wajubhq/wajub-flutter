@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:clock/clock.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
@@ -42,6 +43,26 @@ class Watch {
 
 void main() {
   test('WT-01 polls on schedule', () {
+    for (final jump in [const Duration(hours: 3), const Duration(days: -1)]) {
+      // The slow-down counts the device's monotonic time: the wall clock
+      // jumping forward or back changes nothing.
+      virtual((async) {
+        final api = FakeApi(routes: {'GET /pay/status': 'status-processing.json'});
+        final client = api.payClient();
+        final virtualClock = clock;
+        var offset = Duration.zero;
+        withClock(Clock(() => virtualClock.now().add(offset)), () {
+          PaymentWatcher(client: client, token: 'tok_test', seenProcessing: true, onDecision: (_) {}).start();
+        });
+        async.elapse(const Duration(seconds: 6));
+        offset = jump;
+        async.elapse(const Duration(seconds: 60));
+        expect(api.calls('/pay/status'), hasLength(13), reason: 'every 5 s still ($jump)');
+        async.elapse(const Duration(minutes: 3));
+        expect(api.calls('/pay/status').length, lessThan(13 + 36), reason: 'slower after 2 minutes ($jump)');
+        async.elapse(const Duration(hours: 1));
+      });
+    }
     virtual((async) {
       final watch = Watch(async, FakeApi(routes: {'GET /pay/status': 'status-processing.json'}))..watcher.start();
       async.elapse(const Duration(minutes: 2));

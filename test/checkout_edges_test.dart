@@ -6,6 +6,11 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wajub_mobile/src/wajub_session.dart';
+import 'package:wajub_mobile/src/client/pay_client.dart';
+import 'package:wajub_mobile/src/client/client_info.dart';
+import 'package:http/testing.dart';
+import 'package:http/http.dart' as http;
 import 'package:wajub_mobile/src/checkout/altcha.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
 import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
@@ -803,6 +808,142 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
       expect(cancelled, 1, reason: 'reported through its callbacks');
+    });
+  });
+
+  group('final check of 1.6.0', () {
+    Future<void> settle(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    for (final how in [
+      'X before attempt',
+      'Close on success',
+      'success auto-close',
+      'Close on ended-at-load',
+      'Close on FAILED',
+      'X on FAILED',
+      'host pop',
+    ]) {
+      testWidgets('ST-05 lets onComplete present the next sheet ($how)', (tester) async {
+        final firstApi = switch (how) {
+          'Close on success' ||
+          'success auto-close' =>
+            sandbox({'GET /pay/session': 'session-terminal-succeeded.json'}),
+          'Close on FAILED' ||
+          'X on FAILED' =>
+            sandbox({'POST /pay/process': 'process-402-insufficient-funds-sandbox.json'}),
+          'Close on ended-at-load' => sandbox({'GET /pay/session': 'session-terminal-failed.json'}),
+          _ => sandbox(const {}),
+        };
+        late BuildContext host;
+        await tester.pumpWidget(MaterialApp(home: Builder(builder: (c) {
+          host = c;
+          return const Scaffold(body: Text('host'));
+        })));
+        final second = checkoutController(sandbox(const {}));
+        Object? refused;
+        CheckoutResult? secondResult;
+        var completions = 0;
+        final first = checkoutController(
+          firstApi,
+          options: PresentOptions(
+            sessionToken: 'tok_test',
+            autoCloseSuccess: how == 'success auto-close' ? const Duration(seconds: 3) : Duration.zero,
+            callbacks: CheckoutCallbacks(onComplete: (_) {
+              completions++;
+              presentCheckout(host, second).then<void>((r) {
+                secondResult = r;
+              }, onError: (Object e) {
+                refused = e;
+              });
+            }),
+          ),
+        );
+        unawaited(presentCheckout(host, first));
+        await settle(tester);
+        if (how.contains('FAILED')) {
+          first.selectMethod(first.methods.firstWhere((m) => m.family == MethodFamily.mobileMoney));
+          first.setPhone('670000000');
+          unawaited(first.payMobileMoney());
+          await settle(tester);
+          expect(first.state, CheckoutState.failed);
+        }
+        switch (how) {
+          case 'success auto-close':
+            await tester.pump(const Duration(seconds: 3));
+          case 'X before attempt' || 'X on FAILED':
+            await tester.tap(find.byKey(const ValueKey('wajub-dismiss')));
+          case 'host pop':
+            Navigator.of(host).pop();
+          default:
+            final close = find.byKey(const ValueKey('wajub-close'));
+            await tester.ensureVisible(close);
+            await tester.tap(close);
+        }
+        await settle(tester);
+        await settle(tester);
+        expect(completions, 1);
+        expect(refused, isNull, reason: 'present() from onComplete was refused ($how)');
+        expect(find.byType(BottomSheet), findsOneWidget, reason: 'the second sheet, alone');
+        await tester.tap(find.byKey(const ValueKey('wajub-dismiss')));
+        await settle(tester);
+        expect(secondResult, isA<CheckoutCancelled>());
+        await tester.pumpWidget(const SizedBox());
+      });
+    }
+
+    testWidgets('showWajubPaymentSheet keeps 1.5.1\'s rule: no cancel once a payment was submitted', (tester) async {
+      final api = sandbox({'POST /pay/process': 'process-402-insufficient-funds-sandbox.json'});
+      late BuildContext context;
+      await tester.pumpWidget(MaterialApp(home: Builder(builder: (c) {
+        context = c;
+        return const Scaffold(body: Text('host'));
+      })));
+      final results = <PaymentResult>[];
+      var cancels = 0;
+      unawaited(showWajubPaymentSheet(
+        context: context,
+        session: api.session(),
+        onResult: results.add,
+        onCancel: () => cancels++,
+      ));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '670000000');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wajub-pay-button')));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('wajub-dismiss')));
+      await settle(tester);
+      expect(api.calls('/pay/cancel'), isEmpty, reason: 'something was submitted');
+      expect((results.single as PaymentFailed).error.code, 'insufficient_funds');
+      expect(cancels, 0);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a 1.5-style widget test (a MockClient, no device plugins) gets past the loader', (tester) async {
+      ClientInfo.reset();
+      String body(String name) => jsonEncode(fixtureBody(name));
+      final client = MockClient((request) async => switch (request.url.path) {
+            '/pay/session' => http.Response(body('session-sandbox-cm.json'), 200),
+            '/pay/sdk-config' => http.Response(body('sdk-config-sandbox.json'), 200),
+            _ => http.Response('{}', 404),
+          });
+      final session = WajubSession('tok_test', client: PayClient(httpClient: client));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: PaymentSheet(session: session, onDismiss: () {}, onResult: (_) {}),
+        ),
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byKey(const ValueKey('wajub-method-mobile_money')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      ClientInfo.reset();
     });
   });
 }

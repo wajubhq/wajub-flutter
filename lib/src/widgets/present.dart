@@ -110,6 +110,8 @@ Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController 
     _presented = false;
   }
 
+  // Free before the callbacks run: `onComplete` may present the next sheet.
+  controller.onSettling = free;
   unawaited(sheet.then((_) {
     free();
     if (payerLeft) {
