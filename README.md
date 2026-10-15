@@ -27,12 +27,25 @@ Always confirm a payment server-side (`GET /payments/{id}` or the `payment.succe
 
 | Requirement | Version |
 |-------------|---------|
-| Dart SDK | `^3.5.0` |
-| `flutter_stripe` | `^11.4.0` (Stripe cards) — sets its own minimum iOS/Android versions, see [pub.dev/packages/flutter_stripe](https://pub.dev/packages/flutter_stripe) |
+| Flutter | 3.24 or later (Dart `^3.5.0`) |
+| `flutter_stripe` | `^11.4.0` (Stripe cards) — sets its own requirements, see [pub.dev/packages/flutter_stripe](https://pub.dev/packages/flutter_stripe) (for example `FlutterFragmentActivity` on Android) |
 
 The SDK also uses `url_launcher` (provider pages in the system browser), `web_socket_channel` (realtime updates),
-`shared_preferences`, `device_info_plus` and `flutter_timezone` (the device signals the API's risk scoring reads).
-None needs any setup.
+`flutter_svg` (operator logos), and `shared_preferences`, `device_info_plus` and `flutter_timezone` (the device
+signals of [Privacy](#privacy)). They need no code, but they set native minimums. With the versions pub resolves on
+current Flutter (`device_info_plus` 13.3, `flutter_timezone` 5.1, `shared_preferences_android` 2.4,
+`shared_preferences_foundation` 2.5, `url_launcher_android` 6.3, `url_launcher_ios` 6.4):
+
+- **Android**: Java 17 for the build (`flutter_timezone`, `device_info_plus`, `shared_preferences_android`,
+  `url_launcher_android` compile for it), `compileSdk` 35 or later (`flutter_timezone`), `minSdk` 24
+  (`shared_preferences_android`, `url_launcher_android`).
+- **iOS**: deployment target 13.0 (`shared_preferences_foundation`, `url_launcher_ios`; `device_info_plus` asks
+  12.0, `flutter_timezone` 11.0).
+
+On older Flutter versions pub resolves older plugin versions, whose minimums are lower. On Flutter 3.24 to 3.26,
+pin `flutter_stripe` 11.4 (`dependency_overrides`: `flutter_stripe`, `stripe_android`, `stripe_ios` and
+`stripe_platform_interface` at `11.4.0`): flutter_stripe 11.5 calls Flutter 3.27 APIs although it accepts any
+Flutter 3, and pub picks it.
 
 ## Installation
 
@@ -102,7 +115,12 @@ the open sheet alone.
   and "Continue payment" reopens the page.
 - **Follows** the payment over the session's realtime socket (Pusher or a self-hosted Reverb/Soketi) and by polling
   `GET /pay/status` — every 5 s, slower after 2 minutes without a change, backing off on errors — for at most 15
-  minutes.
+  minutes from the press of Pay, timed on the phone's monotonic clock (a changed device time, or the payment's
+  `expires_at`, never shortens it).
+- **Never loses a payment**: a payment without an answer (a network error, a timeout, a `5xx`) is followed as
+  pending, never shown as failed. If the status still reads a plain `pending` 60 s later, the request never
+  arrived: the form comes back with a connection error, and Pay sends the same `Idempotency-Key`, so a request that
+  did arrive is replayed, not charged twice.
 - **Ends** on a success screen (it closes itself after 3 s), a failure screen with "Try again" when the payer can,
   or "Payment in progress — you will be notified".
 - Speaks **French and English**: the language you ask for, else the payment's, else the device's.
@@ -178,8 +196,25 @@ form), `PROCESSING` (Pay pressed), `APPROVAL_REQUIRED` (approve on the phone), `
 
 When the page that presented the sheet goes away (its route is removed, the app's navigator is disposed), the sheet
 settles: `cancelled` with reason `host_gone` before any payment, `processing` after one started. It never cancels
-the payment then. If the app's process dies, read the outcome on your server (or `WajubSession.status()`) at the
-next launch.
+the payment then; a `presentWajubCheckout` whose `context` is no longer mounted resolves `host_gone` at once. If the
+app's process dies, read the outcome on your server (or `WajubSession.status()`) at the next launch.
+
+### Cancelling and closing
+
+The sheet calls `POST /pay/cancel` only while the payment's last known status is `pending` and no attempt is
+undecided — from the press of Pay to a definitive answer (a decline, a refusal the status reports, a confirmation
+step failed for good, an ended payment). The API would also cancel a payment the payer is still approving on the
+phone, so:
+
+- "Cancel payment" is offered on the method list, a form, and a failure the payer can retry; never while the payer
+  approves, dials a USSD code, confirms a step or waits. Closing the sheet there resolves `processing`, without a
+  call.
+- After a refusal the payment is `pending` again: "Cancel payment" is back, and closing the sheet from the form
+  cancels it as before any attempt (with `cancelOnDismiss`). Closing it on the failure screen resolves `failed`.
+- Closing the sheet while the payment loads resolves `cancelled` (`dismissed`) without a call; once the session has
+  answered, its status decides (`processing` resolves `processing`).
+- While a cancel runs, Pay and Close wait for it. A cancel the API refuses reads the status and resolves with it;
+  `processing` when the status cannot be read.
 
 ## Errors
 
@@ -242,8 +277,11 @@ final session = Wajub.createSession(authorizationToken);
 final data = await session.loadSession();
 final config = await session.getSdkConfig();
 
-final result = await session.payMobileMoney(
-  const MobileMoneyInput(channelSlug: 'cm.mobile', phone: '+237677123456', country: 'CM', operator: 'mtn'),
+// Each call has a new Idempotency-Key unless you pass one: pass the same
+// `idempotencyKey:` again only to resend a payment that got no answer.
+final result = await session.processPayment(
+  'cm.mobile',
+  {'phone': '+237677123456', 'country': 'CM', 'operator': 'mtn'},
 );
 switch (result) {
   case PaymentRequiresAction(:final step?, :final stepId?):
@@ -261,9 +299,11 @@ await for (final update in session.watchStatus()) {
 }
 ```
 
-Also: `status()` (`GET /pay/status`), `process()`, `payWallet()`, `payCardHostedRedirect()`, `payCard()` /
-`payCardWithStripeElements()`, `startClientSession()` / `completeClientSession()`, `resendStep()`,
-`verifyThreeDs()` / `sendThreeDs()` (sandbox), `handleRedirectAction()`, `cancel()`.
+`processPayment()` reads the answer as the sheet does. The 1.5 calls — `process()`, `payMobileMoney()`,
+`payWallet()`, `payCardHostedRedirect()`, `payCard()` / `payCardWithStripeElements()`,
+`startClientSession()` / `completeClientSession()` — keep their 1.5 reading, where a confirmation step is
+`unsupported_action`. Also: `status()` (`GET /pay/status`), `resendStep()`, `verifyThreeDs()` / `sendThreeDs()`
+(sandbox), `handleRedirectAction()`, `cancel()`.
 
 ### Cards via Paystack / Flutterwave (client sessions)
 
@@ -286,14 +326,17 @@ You may instead launch the PSP's native SDK with the `ClientSession` fields — 
 
 ## Migrating from 1.5
 
-Everything you use keeps compiling: no type lost or gained a value, and the deprecated entry points keep their
-signatures.
+Code written for 1.5 keeps compiling — no type lost or gained a value, the deprecated entry points keep their
+signatures — and the 1.5 calls keep their meaning, with the differences listed here.
 
 - **`showWajubPaymentSheet` and `PaymentSheet` are deprecated** in favour of `presentWajubCheckout`. They keep
-  working and now draw the new sheet: `onResult` receives `PaymentComplete`, `PaymentFailed`, or
-  `PaymentProcessing` when the sheet closed while a payment was running, once the sheet closes (no more
-  `PaymentRequiresAction` — the sheet now follows redirects, approvals and confirmation steps itself); `onCancel`
-  as before.
+  working and now draw the new sheet, which follows redirects, approvals and confirmation steps itself:
+  - `onResult` comes once, when the sheet closes, with `PaymentComplete`, `PaymentFailed`, or
+    `PaymentProcessing` when it closed while a payment was running — no `PaymentRequiresAction` any more;
+  - `onCancel` (and `PaymentSheet.onDismiss`) as before: the payer closed the sheet or cancelled, or the payment
+    could not load;
+  - `PaymentSheet.onPaymentStarted` as before: when the payer submits, before any answer;
+  - an already paid payment now reports `PaymentComplete` instead of offering a form.
 
   ```dart
   // 1.5
@@ -302,17 +345,50 @@ signatures.
   final result = await presentWajubCheckout(context, PresentOptions(sessionToken: token));
   ```
 
-- **`confirm_otp`, `confirm_pin`, `confirm_phone`, `confirm_birthday`, `confirm_address`** are no longer
-  `unsupported_action`: the low-level calls return `PaymentRequiresAction` with `action: ActionKind.confirm`, no
-  `actionUrl`, and the new `step`, `stepId` and `hint`; `WajubSession.verifyStep()` sends the payer's answer.
+- **Confirmation steps** (`confirm_otp`, `confirm_pin`, `confirm_phone`, `confirm_birthday`, `confirm_address`):
+  the 1.5 calls still return `PaymentFailed` with `unsupported_action` for them. The new
+  `WajubSession.processPayment()` returns `PaymentRequiresAction` with `action: ActionKind.confirm`, no
+  `actionUrl`, and the new `step`, `stepId` and `hint`; `verifyStep()` sends the payer's answer.
 - **`WajubError`**: the errors the SDK builds from API answers follow Wajub.js's catalogue — messages in the
   sheet's (or the device's) language, the API's own text in `apiMessage`, a `410` as an `invalidRequestError` (it
   was `authenticationError`), a decline code the catalogue does not know read as "This payment could not be
   completed…". `WajubError.fromHttp` keeps its 1.5 mapping.
 - **`MobileMoneyInput.phone`** is sent as you give it: give it in E.164 (`+237677123456`). The sheet builds it from
   what the payer types.
-- **`watchStatus()`** reads `GET /pay/status` instead of the whole session, follows a self-hosted Reverb as well as
-  Pusher, and stops on `401`, `403`, `404` and `410`.
+- **`watchStatus()`** keeps its results — `PaymentProcessing` on each change, `PaymentComplete`, `PaymentFailed`
+  with the status as its code (`failed`, `cancelled`, `expired`) — and still watches until one. It now reads
+  `GET /pay/status` instead of the whole session, follows a self-hosted Reverb as well as Pusher, ends with the
+  `WajubError` on `401`, `403`, `404` and `410`, and reports an attempt that went back to `pending` without
+  charging as `PaymentFailed` with the refusal's code (`insufficient_funds`…) instead of waiting forever.
+- **Native minimums**: the new plugins need Java 17, `compileSdk` 35, Android `minSdk` 24 and iOS 13 with the
+  versions current Flutter resolves (see [Requirements](#requirements)); declare the device signals in your store
+  listings (see [Privacy](#privacy)).
+
+## Privacy
+
+To score fraud the way the web checkout does, every payment sends Wajub a few device signals
+(`data._client` of `POST /pay/process`), and every call names the SDK:
+
+- the device's time zone (`Africa/Douala`), its preferred language (`fr-CM`) and its languages
+  (`Accept-Language`), the main screen's size in pixels and its colour depth;
+- the SDK's name and version and the OS name and version (`X-Wajub-Client`, and the `User-Agent` suffix);
+- an **install fingerprint**: the SHA-256 of a random identifier the SDK creates on first use and keeps in the
+  app's private storage (`shared_preferences`, key `wajub_mobile.install_id`). It is not derived from any hardware
+  or advertising identifier, and it is gone when the app is uninstalled or its data cleared.
+
+The Mobile Money number, the email and the other fields the payer types go to Wajub only to make the payment.
+Nothing is sent to anyone but Wajub (`api.wajub.com`), and the realtime socket only receives the payment's status.
+
+What to declare:
+
+- **App Store privacy labels**: *Identifiers → Device ID* (the install fingerprint) and, for the payment itself,
+  *Contact Info* (phone number, email) and *Financial Info* (payment info) — all *Used for: App Functionality*
+  (Apple's purpose that covers fraud prevention), linked to the user when the payment is, not used for tracking.
+- **Google Play data safety**: *Device or other IDs* (the install fingerprint), *Personal info* (phone number,
+  email) and *Financial info* (purchase history), collected for *Fraud prevention, security, and compliance* and
+  *App functionality*, shared with Wajub as your payment processor, encrypted in transit.
+
+Your own app may collect more; this lists what this package adds.
 
 ## API URL
 
