@@ -377,6 +377,12 @@ class CheckoutController extends ChangeNotifier {
   String? _lastErrorCode;
   String? _errorCodeBeforeAttempt;
 
+  /// Whether that refusal code is known: an older API's session does not
+  /// say, and until a code is read, none is taken for this attempt's
+  /// refusal before the 60 s rule.
+  var _baselineKnown = false;
+  var _baselineKnownBeforeAttempt = false;
+
   /// How many `/pay/client-session/complete` calls are running (one per
   /// return to the app): while any runs, they decide, not a refusal the
   /// watch reads meanwhile (deferred here until the last one answers).
@@ -471,6 +477,7 @@ class CheckoutController extends ChangeNotifier {
     _transaction = loaded.transaction;
     // A refusal an earlier try left on the payment is not this sheet's news.
     _lastErrorCode ??= loaded.transaction.errorCode;
+    _baselineKnown = _baselineKnown || loaded.transaction.errorCodeKnown || _lastErrorCode != null;
     if (!_payable(loaded.transaction.status)) {
       // Paid, ended or processing: the session alone says what to show, at
       // once. sdk-config and the Mobile Money tables, when they come, only
@@ -902,6 +909,7 @@ class CheckoutController extends ChangeNotifier {
       ..reset()
       ..start();
     _errorCodeBeforeAttempt = _lastErrorCode;
+    _baselineKnownBeforeAttempt = _baselineKnown;
     _inFlight = true;
     _altchaReloaded = false;
     _continueUrl = null;
@@ -1127,6 +1135,7 @@ class CheckoutController extends ChangeNotifier {
     _unansweredPath = null;
     if (status == 402) {
       _lastErrorCode = error.declineCode ?? error.code;
+      _baselineKnown = true;
       _pendingAgain();
     }
     if (status == 400) {
@@ -1486,7 +1495,10 @@ class CheckoutController extends ChangeNotifier {
     if (status == null || settled) return;
     _transaction = _transaction?.copyWith(status: status);
     final code = update.errorCode;
-    if (code != null) _lastErrorCode = code;
+    if (code != null) {
+      _lastErrorCode = code;
+      _baselineKnown = true;
+    }
     if (status == 'processing' || status == 'partial') {
       _seenProcessing = true;
       _unansweredPath = null;
@@ -1494,7 +1506,7 @@ class CheckoutController extends ChangeNotifier {
     }
     final path = _unansweredPath;
     if (path == null || _seenProcessing || status != 'pending') return;
-    if (code != null && code != _errorCodeBeforeAttempt) {
+    if (code != null && _baselineKnownBeforeAttempt && code != _errorCodeBeforeAttempt) {
       // A refusal of this very attempt, answered before the first read.
       _onDecision(WatchDecision(WatchVerdict.failed, update: update, error: attemptEndedError(update, language)));
     } else if ((session.client.sinceSent(path) ?? _neverArrivedAfter) >= _neverArrivedAfter) {
@@ -1505,7 +1517,10 @@ class CheckoutController extends ChangeNotifier {
   void _onDecision(WatchDecision decision) {
     if (settled || _isFinal) return;
     final code = decision.update?.errorCode;
-    if (code != null) _lastErrorCode = code;
+    if (code != null) {
+      _lastErrorCode = code;
+      _baselineKnown = true;
+    }
     if (_completing && decision.verdict == WatchVerdict.failed && decision.update?.status == 'pending') {
       // The client session's completion is on its way: it decides.
       _deferredDecision = decision;
@@ -1581,7 +1596,10 @@ class CheckoutController extends ChangeNotifier {
       if (_stale(attempt)) return;
       final error = e.localized(language);
       if (error.httpStatus == 402 || error.code == 'client_session_expired') {
-        if (error.httpStatus == 402) _lastErrorCode = error.declineCode ?? error.code;
+        if (error.httpStatus == 402) {
+          _lastErrorCode = error.declineCode ?? error.code;
+          _baselineKnown = true;
+        }
         _pendingAgain();
         _clientSessionId = null;
         _deferredDecision = null;

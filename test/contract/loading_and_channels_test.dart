@@ -227,9 +227,38 @@ void main() {
       expect(checkout.controller.state, CheckoutState.failed);
       checkout.end();
     });
-    // A missing error_code (a 2.0 session) reads as null.
-    expect(SessionData.fromJson(fixtureBody('session-ci-xof-wallets.json')).transaction.errorCode, isNull);
-    expect(SessionData.fromJson(fixtureBody('session-cm-aggregate.json')).transaction.errorCode, isNull);
+    for (final keyed in [true, false]) {
+      virtual((async) {
+        // `error_code: null` says no refusal is left: a code read after an
+        // unanswered Pay is this attempt's refusal. Without the key (an API
+        // older than 2.1) nothing is known: no code is taken for this
+        // attempt's refusal before the 60 s rule.
+        final session = fixtureBody('session-cm-aggregate.json');
+        final transaction = session['transaction'] as Map;
+        expect(transaction.containsKey('error_code'), isTrue);
+        if (!keyed) transaction.remove('error_code');
+        final api = FakeApi(routes: {
+          'GET /pay/session': FakeAnswer(200, session),
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'POST /pay/process': const FakeAnswer.network(),
+          'GET /pay/status': 'status-pending-attempt-refused.json',
+        });
+        final checkout = Checkout(async, api);
+        expect(checkout.controller.sessionData!.transaction.errorCode, isNull);
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        checkout.elapse(const Duration(seconds: 15));
+        if (keyed) {
+          expect(checkout.controller.state, CheckoutState.failed, reason: 'null: the code is news');
+          expect(checkout.controller.error?.code, 'insufficient_funds');
+        } else {
+          expect(checkout.controller.state, CheckoutState.pending, reason: 'no key: unknown baseline');
+          checkout.elapse(const Duration(seconds: 55));
+          expect(checkout.controller.state, CheckoutState.collectingDetails, reason: 'the 60 s rule');
+        }
+        checkout.end();
+      });
+    }
   });
 
   test('LD-08 raises ready_timeout', () {

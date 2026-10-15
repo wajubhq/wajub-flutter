@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import 'json_read.dart';
 import 'payment_result.dart';
 
@@ -106,6 +108,7 @@ class SessionTransaction {
     this.updatedAt,
     this.terminalAt,
     this.errorCode,
+    this.errorCodeKnown = false,
   });
 
   /// Wajub's payment id (`trx_…`), what `GET /payments/{id}` takes.
@@ -145,6 +148,11 @@ class SessionTransaction {
   /// Why the last attempt was refused, while the payment can be paid again.
   final String? errorCode;
 
+  /// Whether the answer said whether a refusal is left (older answers did
+  /// not): when false, a null [errorCode] means "not known", not "none".
+  @internal
+  final bool errorCodeKnown;
+
   /// The amount to show and to report: [amountTotal], else [amount].
   double get payableAmount => amountTotal ?? amount;
 
@@ -169,6 +177,7 @@ class SessionTransaction {
         updatedAt: updatedAt,
         terminalAt: terminalAt,
         errorCode: errorCode,
+        errorCodeKnown: errorCodeKnown,
       );
 
   /// Throws a [FormatException] when the amount is not a number.
@@ -195,6 +204,7 @@ class SessionTransaction {
         updatedAt: readText(json['updated_at']),
         terminalAt: readText(json['terminal_at']),
         errorCode: readText(json['error_code']),
+        errorCodeKnown: json.containsKey('error_code'),
       );
 }
 
