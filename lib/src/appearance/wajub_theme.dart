@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 /// The sheet's colour tokens. The defaults are the web checkout's own
 /// (`checkout.wajub src/styles/tokens.css`), so the sheet looks like the

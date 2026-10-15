@@ -160,7 +160,10 @@ class ClientInfo {
 
   static Future<String> _timezone() async {
     try {
-      return (await FlutterTimezone.getLocalTimezone()).identifier;
+      // flutter_timezone 4 answers the identifier, 5 a TimezoneInfo carrying
+      // it: both are allowed, Flutter 3.24 can only resolve 4.
+      final Object zone = await FlutterTimezone.getLocalTimezone();
+      return zone is String ? zone : (zone as dynamic).identifier as String;
     } catch (_) {
       // Without the plugin only the abbreviation is known (`WAT`).
       return DateTime.now().timeZoneName;

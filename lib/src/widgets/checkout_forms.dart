@@ -173,7 +173,10 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
         if (!controller.countryLocked && data != null) ...[
           DropdownButtonFormField<String>(
             key: const ValueKey('wajub-country'),
-            initialValue: controller.country,
+            // `value` is deprecated from Flutter 3.35 for `initialValue`,
+            // which 3.24 (this package's floor) does not have.
+            // ignore: deprecated_member_use
+            value: controller.country,
             decoration: InputDecoration(labelText: strings.country),
             items: [
               for (final code in controller.countries)

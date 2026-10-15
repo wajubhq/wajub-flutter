@@ -19,3 +19,23 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter pub publish --dry-run
+
+  # The oldest Flutter pubspec.yaml allows (3.24, Dart 3.5): an app that has
+  # not upgraded Flutter must still build the package. flutter_stripe 11.5
+  # calls Flutter 3.27 APIs while it claims any Flutter 3, so this job pins
+  # the 11.4 an app on Flutter 3.24-3.26 must pin too (README). The formatter
+  # is not run here: its style changed in Dart 3.7.
+  minimum-flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.24.5
+          channel: stable
+          cache: true
+      - run: |
+          printf '\ndependency_overrides:\n  flutter_stripe: 11.4.0\n  stripe_android: 11.4.0\n  stripe_ios: 11.4.0\n  stripe_platform_interface: 11.4.0\n' >> pubspec.yaml
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test

@@ -15,5 +15,7 @@ export 'src/models/wajub_error.dart';
 export 'src/version.dart';
 export 'src/wajub.dart';
 export 'src/wajub_session.dart';
+// Deprecated, still public.
+// ignore: deprecated_member_use_from_same_package
 export 'src/widgets/payment_sheet.dart' show PaymentSheet, showWajubPaymentSheet;
 export 'src/widgets/present.dart' show presentWajubCheckout;
