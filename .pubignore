@@ -12,12 +12,6 @@ pubspec.lock
 .DS_Store
 *.swp
 
-# The tests (and the spec's fixtures and vectors they read) and the tools stay
-# in the repository.
+# The tests, and the spec's fixtures and vectors they read, stay in the
+# repository.
 test/
-tool/
-
-# The spec's copy of the Mobile Money tables, with its notes: the package
-# ships and reads assets/wajub/mobile-money.min.json, built from it by
-# tool/mobile_money_runtime.dart.
-assets/wajub/mobile-money.json

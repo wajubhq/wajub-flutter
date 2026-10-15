@@ -18,13 +18,14 @@ abstract final class MobileMoneyRules {
     bool sandbox = false,
   }) {
     if (MobileMoneyData.sanitize(phone).isEmpty) return 'phone_required';
-    if (!data.isValid(phone, country)) return 'invalid_phone';
+    if (!data.isValid(phone, country, sandbox: sandbox)) return 'invalid_phone';
     final mismatched = mismatch(
       data: data,
       phone: phone,
       country: country,
       choiceIds: choiceIds,
       selectedId: selectedId,
+      sandbox: sandbox,
     );
     if (mismatched != null && !sandbox) return 'operator_mismatch';
     if (selectedId == null || !choiceIds.contains(selectedId)) return 'operator_required';
@@ -41,9 +42,10 @@ abstract final class MobileMoneyRules {
     required String country,
     required List<String> choiceIds,
     required String? selectedId,
+    bool sandbox = false,
   }) {
     if (selectedId == null || data.isOperatorIndependent(selectedId)) return null;
-    final detected = data.detectOperator(phone, country);
+    final detected = data.detectOperator(phone, country, sandbox: sandbox);
     if (detected == null || detected == selectedId || !choiceIds.contains(detected)) return null;
     return detected;
   }
@@ -86,15 +88,16 @@ abstract final class MobileMoneyRules {
     required String country,
     required OperatorChoice choice,
     required bool pickedByHand,
+    bool sandbox = false,
   }) {
     final hint = operatorHint(
       viaAggregate: choice.viaAggregate,
       selectedId: choice.id,
       pickedByHand: pickedByHand,
-      detectedId: data.detectOperator(phone, country),
+      detectedId: data.detectOperator(phone, country, sandbox: sandbox),
     );
     return {
-      'phone': data.e164(phone, country),
+      'phone': data.e164(phone, country, sandbox: sandbox),
       'country': country.toUpperCase(),
       if (hint != null) 'operator': hint,
     };
@@ -112,10 +115,11 @@ abstract final class MobileMoneyRules {
     required String country,
     required List<String> choiceIds,
     bool openedByPayer = false,
+    bool sandbox = false,
   }) {
     if (operatorMode != 'detect' || openedByPayer) return true;
     if (data.nationalDigits(phone, country).length < 6) return false;
-    final detected = data.detectOperator(phone, country);
+    final detected = data.detectOperator(phone, country, sandbox: sandbox);
     if (detected == null || !choiceIds.contains(detected)) return true;
     return choiceIds.any(data.isOperatorIndependent);
   }
@@ -127,8 +131,9 @@ abstract final class MobileMoneyRules {
     required String phone,
     required String country,
     required List<String> choiceIds,
+    bool sandbox = false,
   }) {
-    final detected = data.detectOperator(phone, country);
+    final detected = data.detectOperator(phone, country, sandbox: sandbox);
     if (detected != null && choiceIds.contains(detected)) return detected;
     return choiceIds.length == 1 ? choiceIds.single : null;
   }

@@ -224,7 +224,11 @@ class CheckoutController extends ChangeNotifier {
   String get phone => _phone;
 
   /// The operator the number belongs to, among the choices or not.
-  String? get detectedOperatorId => _country == null ? null : _mobileMoneyData?.detectOperator(_phone, _country!);
+  String? get detectedOperatorId =>
+      _country == null ? null : _mobileMoneyData?.detectOperator(_phone, _country!, sandbox: _sandbox);
+
+  /// A sandbox session: its test numbers count.
+  bool get _sandbox => _session?.transaction.sandbox ?? false;
 
   /// Hide the country selector.
   bool get countryLocked =>
@@ -243,6 +247,7 @@ class CheckoutController extends ChangeNotifier {
       country: _country!,
       choiceIds: [for (final choice in _choices) choice.id],
       openedByPayer: _listOpened,
+      sandbox: _sandbox,
     );
   }
 
@@ -255,6 +260,7 @@ class CheckoutController extends ChangeNotifier {
       phone: _phone,
       country: _country!,
       choiceIds: [for (final choice in _choices) choice.id],
+      sandbox: _sandbox,
     );
     return _choices.where((choice) => choice.id == id).firstOrNull;
   }
@@ -721,7 +727,7 @@ class CheckoutController extends ChangeNotifier {
       choiceIds: [for (final choice in _choices) choice.id],
       currentId: _selectedId,
       pickedByHand: _pickedByHand,
-      detectedId: data.detectOperator(_phone, _country!),
+      detectedId: data.detectOperator(_phone, _country!, sandbox: _sandbox),
     );
   }
 
@@ -734,6 +740,7 @@ class CheckoutController extends ChangeNotifier {
       country: _country!,
       choiceIds: [for (final choice in _choices) choice.id],
       selectedId: _selectedId,
+      sandbox: _sandbox,
     );
   }
 
@@ -793,7 +800,7 @@ class CheckoutController extends ChangeNotifier {
       country: country,
       choiceIds: [for (final choice in _choices) choice.id],
       selectedId: _selectedId,
-      sandbox: _session?.transaction.sandbox ?? false,
+      sandbox: _sandbox,
     );
     if (code != null) {
       final message = code == 'operator_mismatch'
@@ -809,6 +816,7 @@ class CheckoutController extends ChangeNotifier {
       country: country,
       choice: choice,
       pickedByHand: _pickedByHand,
+      sandbox: _sandbox,
     );
     _approvalPhone = request['phone'] as String?;
     await _process(choice.channelSlug, request, MethodFamily.mobileMoney);

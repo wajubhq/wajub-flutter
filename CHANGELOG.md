@@ -20,9 +20,10 @@
   Retry (`load_error`).
 - Mobile Money: one form for every operator of the payment, with the country, the operators and their logos, and
   the number formatted as it is typed. The number preselects its operator until the payer picks one, and a number
-  of another operator is refused before anything is sent (a warning only in sandbox). Côte d'Ivoire and Benin
-  numbers have ten digits with their leading 0, and a Beninese number typed on the earlier eight digits is taken
-  with 01 in front. After Pay, "Approve the payment on your phone" with the operator's instructions, or a USSD code
+  of another operator is refused before anything is sent (a warning only in sandbox). Numbers are read by each
+  country's current numbering plan (a number typed the earlier way is taken in its current form), the operator is
+  recognised from the number in more countries, and a sandbox session accepts the sandbox test numbers with the
+  operator they test. After Pay, "Approve the payment on your phone" with the operator's instructions, or a USSD code
   to dial.
 - Cards: Stripe's card form (it needs `FlutterFragmentActivity` on Android), the provider's secure page in the
   system browser with "Continue payment" to reopen it, and a test card form in sandbox. Your app never handles card

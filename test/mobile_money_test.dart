@@ -10,7 +10,6 @@ import 'package:wajub_mobile/src/mobile_money/operator_choice.dart';
 import 'package:wajub_mobile/src/mobile_money/operator_logo.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 
-import '../tool/mobile_money_runtime.dart';
 import 'support/fixtures.dart';
 
 const dataFile = 'assets/wajub/mobile-money.json';
@@ -43,6 +42,48 @@ void main() {
       expect(data.e164(input, country), vector['e164'], reason: reason);
       expect(MobileMoneyData.formatAsYouType(input), vector['formatted'], reason: reason);
     }
+  });
+
+  test('MM-10 takes the sandbox test numbers', () {
+    final sandboxNumbers = (vectors()['sandbox_numbers'] as List).cast<Map<String, dynamic>>();
+    expect(sandboxNumbers, isNotEmpty);
+    for (final vector in sandboxNumbers) {
+      final input = vector['input'] as String;
+      final country = vector['country'] as String;
+      final reason = '$input in $country';
+      final test = data.sandboxTestNumber(input, country);
+      expect(test?.operator, vector['operator'], reason: reason);
+      expect(test?.e164, vector['e164'], reason: reason);
+      if (test != null) {
+        // In a sandbox session: valid, the prefix's operator, sent as read.
+        expect(data.isValid(input, country, sandbox: true), isTrue, reason: reason);
+        expect(data.detectOperator(input, country, sandbox: true), vector['operator'], reason: reason);
+        expect(data.e164(input, country, sandbox: true), vector['e164'], reason: reason);
+      } else {
+        expect(data.detectOperator(input, country, sandbox: true), data.detectOperator(input, country), reason: reason);
+        expect(data.e164(input, country, sandbox: true), data.e164(input, country), reason: reason);
+      }
+    }
+    // Outside a sandbox session the prefixes mean nothing.
+    expect(data.isValid('+225070000000', 'CI'), isFalse, reason: 'one digit short of an Ivorian number');
+    expect(data.e164('90 00 00 00', 'BJ'), '+2290190000000');
+    expect(data.detectOperator('680000000', 'CM'), 'mtn', reason: 'Express Union only in sandbox');
+    expect(data.detectOperator('680000000', 'CM', sandbox: true), 'eu');
+    expect(
+      MobileMoneyRules.validate(
+          data: data, phone: '+225070000000', country: 'CI', choiceIds: const ['orange'], selectedId: 'orange'),
+      'invalid_phone',
+    );
+    expect(
+      MobileMoneyRules.validate(
+          data: data,
+          phone: '+225070000000',
+          country: 'CI',
+          choiceIds: const ['orange'],
+          selectedId: 'orange',
+          sandbox: true),
+      isNull,
+    );
   });
 
   test('MM-02 matches the mismatch vectors', () {
@@ -264,30 +305,20 @@ void main() {
 
     test('rejects an unknown schema_version', () async {
       final file = jsonDecode(File(dataFile).readAsStringSync()) as Map<String, dynamic>;
-      final future = jsonEncode({...file, 'schema_version': 2});
+      final future = jsonEncode({...file, 'schema_version': 3});
+      final past = jsonEncode({...file, 'schema_version': 1});
 
+      expect(file['schema_version'], 2);
       expect(() => MobileMoneyData.parse(future), throwsFormatException);
+      expect(() => MobileMoneyData.parse(past), throwsFormatException);
       await expectLater(MobileMoneyData.load(_StringBundle(future)), throwsFormatException);
       expect(() => MobileMoneyData.parse('[]'), throwsFormatException);
     });
 
-    test('ships the synced file without its notes, nothing else changed', () {
-      final synced = File(dataFile).readAsStringSync();
-      expect(File(runtimeFile).readAsStringSync(), runtimeTables(synced),
-          reason: 'run `dart run tool/mobile_money_runtime.dart` after sync-spec.sh');
-      final shipped = File(runtimeFile).readAsStringSync();
-      for (final note in ['"source"', '"errata"', '"algorithms"', 'checkout.wajub', 'api.wajub']) {
-        expect(shipped.contains(note), isFalse, reason: note);
-      }
-      final full = jsonDecode(synced) as Map<String, dynamic>;
-      final loadedFromShipped = MobileMoneyData.parse(shipped);
-      final loadedFromFull = MobileMoneyData.parse(synced);
-      expect(loadedFromShipped.countries.keys, loadedFromFull.countries.keys);
-      for (final code in (full['countries'] as Map).keys) {
-        final a = loadedFromShipped.countries[code]!;
-        final b = loadedFromFull.countries[code]!;
-        expect((a.dialCode, a.nationalNumberLength, a.keepTrunkZero, a.placeholder, a.prefixRules.length),
-            (b.dialCode, b.nationalNumberLength, b.keepTrunkZero, b.placeholder, b.prefixRules.length));
+    test('ships the tables without the spec\'s notes', () {
+      final shipped = jsonDecode(File(dataFile).readAsStringSync()) as Map<String, dynamic>;
+      for (final note in ['source', 'errata', 'algorithms']) {
+        expect(shipped.containsKey(note), isFalse, reason: note);
       }
     });
 
