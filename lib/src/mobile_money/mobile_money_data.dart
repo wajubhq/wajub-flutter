@@ -7,8 +7,9 @@ import '../models/json_read.dart';
 /// The Mobile Money tables of the shared spec (`data/mobile-money.json`):
 /// per country its dial code, number length, placeholder and prefix rules,
 /// per operator its name and brand badge, and the operator-independent
-/// wallets. The file ships in `assets/wajub/` and is read at first use; no
-/// copy of these tables lives in code.
+/// wallets. They ship in `assets/wajub/mobile-money.min.json` (the spec's
+/// file without its notes, built by `tool/mobile_money_runtime.dart`) and
+/// are read at first use; no copy of these tables lives in code.
 class MobileMoneyData {
   const MobileMoneyData({
     required this.countries,
@@ -23,10 +24,10 @@ class MobileMoneyData {
   static const supportedSchemaVersion = 1;
 
   /// Where the file is when this package is a dependency of the app.
-  static const assetKey = 'packages/wajub_mobile/assets/wajub/mobile-money.json';
+  static const assetKey = 'packages/wajub_mobile/assets/wajub/mobile-money.min.json';
 
   /// Where it is when this package is the root package (its own tests).
-  static const rootAssetKey = 'assets/wajub/mobile-money.json';
+  static const rootAssetKey = 'assets/wajub/mobile-money.min.json';
 
   static MobileMoneyData? _shared;
 

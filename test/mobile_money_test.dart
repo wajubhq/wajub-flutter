@@ -10,6 +10,7 @@ import 'package:wajub_mobile/src/mobile_money/operator_choice.dart';
 import 'package:wajub_mobile/src/mobile_money/operator_logo.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 
+import '../tool/mobile_money_runtime.dart';
 import 'support/fixtures.dart';
 
 const dataFile = 'assets/wajub/mobile-money.json';
@@ -268,6 +269,26 @@ void main() {
       expect(() => MobileMoneyData.parse(future), throwsFormatException);
       await expectLater(MobileMoneyData.load(_StringBundle(future)), throwsFormatException);
       expect(() => MobileMoneyData.parse('[]'), throwsFormatException);
+    });
+
+    test('ships the synced file without its notes, nothing else changed', () {
+      final synced = File(dataFile).readAsStringSync();
+      expect(File(runtimeFile).readAsStringSync(), runtimeTables(synced),
+          reason: 'run `dart run tool/mobile_money_runtime.dart` after sync-spec.sh');
+      final shipped = File(runtimeFile).readAsStringSync();
+      for (final note in ['"source"', '"errata"', '"algorithms"', 'checkout.wajub', 'api.wajub']) {
+        expect(shipped.contains(note), isFalse, reason: note);
+      }
+      final full = jsonDecode(synced) as Map<String, dynamic>;
+      final loadedFromShipped = MobileMoneyData.parse(shipped);
+      final loadedFromFull = MobileMoneyData.parse(synced);
+      expect(loadedFromShipped.countries.keys, loadedFromFull.countries.keys);
+      for (final code in (full['countries'] as Map).keys) {
+        final a = loadedFromShipped.countries[code]!;
+        final b = loadedFromFull.countries[code]!;
+        expect((a.dialCode, a.nationalNumberLength, a.keepTrunkZero, a.placeholder, a.prefixRules.length),
+            (b.dialCode, b.nationalNumberLength, b.keepTrunkZero, b.placeholder, b.prefixRules.length));
+      }
     });
 
     test('keeps no copy of the tables in code', () {
