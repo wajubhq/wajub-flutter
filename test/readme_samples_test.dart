@@ -112,9 +112,9 @@ Future<void> headless(String authorizationToken) async {
     case PaymentComplete():
       // Paid.
       break;
-    case PaymentProcessing(kind: ProcessingKind.approval, :final instruction):
+    case PaymentRequiresAction(action: ActionKind.pushApproval, :final transaction):
       // Approve the push on the phone; follow the status.
-      print(instruction); // the provider's words, when it gives some
+      print(transaction.processingContext?.payerInstruction); // the provider's words, when it gives some
     case PaymentProcessing(kind: ProcessingKind.ussd, :final instruction):
       // Dial the USSD code it gives; follow the status.
       print(instruction);
