@@ -1,6 +1,6 @@
 import 'package:url_launcher/url_launcher.dart';
 
-/// Opens PSP confirmation URLs in the system browser — never an embedded WebView.
+/// Opens a provider's page in the system browser.
 class HostedRedirect {
   HostedRedirect._();
 

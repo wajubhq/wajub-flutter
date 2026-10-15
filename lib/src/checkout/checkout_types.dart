@@ -1,7 +1,7 @@
 import '../models/models.dart';
 import '../models/wajub_error.dart';
 
-/// Where the checkout is, under Wajub.js's 17 names (spec states.md §2).
+/// Where the payment sheet is.
 enum CheckoutState {
   initiated('INITIATED'),
   collectingDetails('COLLECTING_DETAILS'),
@@ -23,7 +23,7 @@ enum CheckoutState {
 
   const CheckoutState(this.wireName);
 
-  /// Wajub.js's name: `COLLECTING_DETAILS`, `3DS_REQUIRED`…
+  /// The state's name: `COLLECTING_DETAILS`, `3DS_REQUIRED`…
   final String wireName;
 }
 
@@ -43,9 +43,8 @@ enum CancelReason {
   final String wireName;
 }
 
-/// A successful payment, as Wajub.js reports it. Confirm it server-side
-/// (`GET /payments/{id}` or the `payment.succeeded` webhook) before
-/// delivering.
+/// A successful payment. Confirm it on your server (`GET /payments/{id}` or
+/// the `payment.succeeded` webhook) before delivering.
 class PaymentSuccess {
   const PaymentSuccess({
     required this.id,
@@ -57,13 +56,13 @@ class PaymentSuccess {
     this.receiptUrl,
   });
 
-  /// Wajub's payment id (`transaction.id`).
+  /// Wajub's payment id, what `GET /payments/{id}` takes.
   final String id;
 
-  /// The merchant's reference.
+  /// Your reference for the payment.
   final String? reference;
 
-  /// What the payer paid (`amount_total`), major units.
+  /// What the payer paid, fee included, in major units.
   final double amount;
   final String currency;
 
@@ -74,7 +73,7 @@ class PaymentSuccess {
   /// Always `success`.
   String get status => 'success';
 
-  /// ISO 8601: `terminal_at`, else `updated_at`, else when the sheet saw it.
+  /// When it was paid, ISO 8601.
   final String timestamp;
   final String? receiptUrl;
 
@@ -100,7 +99,7 @@ class PaymentSuccess {
       };
 }
 
-/// What `presentWajubCheckout` resolves with, exactly once (states.md §4).
+/// What `presentWajubCheckout` resolves with, exactly once.
 sealed class CheckoutResult {
   const CheckoutResult();
 
@@ -153,7 +152,8 @@ class CheckoutCancelled extends CheckoutResult {
 
   final CancelReason reason;
 
-  /// The merchant's callback `POST /pay/cancel` returned, when it was called.
+  /// The merchant's page for a cancelled payment, when the payment was
+  /// cancelled.
   final String? redirectUrl;
 
   @override
@@ -173,7 +173,7 @@ class ReadyEvent {
     required this.methods,
   });
 
-  /// `transaction.id`.
+  /// Wajub's payment id.
   final String sessionId;
 
   /// `sandbox` or `live`.

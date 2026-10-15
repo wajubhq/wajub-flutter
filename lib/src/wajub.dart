@@ -12,14 +12,15 @@ class Wajub {
 
   static String? _publicKey;
 
-  /// Optional merchant public key (`pk_*`) — stored for Stripe initialization helpers.
+  /// Stores a merchant public key (`pk_*`); the payment sheet does not need one.
   static void initialize({required String publicKey}) {
     _publicKey = publicKey.trim();
   }
 
   static String? get publicKey => _publicKey;
 
-  /// Creates a session client from the backend `authorization_token`.
+  /// A [WajubSession] for the payment's `authorization_token`, from your
+  /// server. [client] sends its calls through your own `http.Client`.
   static WajubSession createSession(String authorizationToken, {PayClient? client}) =>
       WajubSession(authorizationToken, client: client ?? PayClient());
 

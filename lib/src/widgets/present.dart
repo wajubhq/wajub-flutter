@@ -10,8 +10,8 @@ import '../wajub_session.dart';
 import 'checkout_view.dart';
 
 /// Presents the Wajub payment sheet for [PresentOptions.sessionToken] (the
-/// `authorization_token` your server got from `POST /payments`) and resolves
-/// once it closes, exactly once, with a [CheckoutResult]:
+/// `authorization_token` your server got when it created the payment) and
+/// resolves once it closes, exactly once, with a [CheckoutResult]:
 ///
 /// - [CheckoutComplete]: paid. Confirm it server-side before delivering.
 /// - [CheckoutProcessing]: closed while a payment was running; money may

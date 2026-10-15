@@ -1,7 +1,7 @@
-/// Wajub.js's variables (`appearance.variables`), under the same names, so a
-/// merchant styles the web Components and this sheet with one object.
+/// The appearance variables, with the names of
+/// [Appearance](https://docs.wajub.com/libraries/components/appearance).
 ///
-/// Values are strings as in Wajub.js: colours `#rgb`, `#rrggbb`,
+/// Values are strings: colours `#rgb`, `#rrggbb`,
 /// `#rrggbbaa`, `rgb()`, `rgba()`; lengths `"8px"`, `"8"`, `"0.5rem"`; font
 /// weights `"400"`…`"700"`, `"normal"`, `"bold"`. A value that does not parse
 /// is ignored, never an error.
@@ -68,7 +68,7 @@ class AppearanceVariables {
   /// The horizontal gap between side-by-side fields.
   final String? spacingGridColumn;
 
-  /// Wajub.js's `variables` object as a map: unknown keys and values that are
+  /// The `variables` object as a map: unknown keys and values that are
   /// neither strings nor (for lengths and weights) numbers are ignored.
   factory AppearanceVariables.fromMap(Map<String, Object?> map) => AppearanceVariables(
         colorPrimary: _string(map['colorPrimary']),
@@ -90,10 +90,9 @@ class AppearanceVariables {
       );
 }
 
-/// How the sheet looks: Wajub.js 1.8's `AppearanceConfig`, key for key, so
-/// the object a merchant gives the web Components styles this sheet the same
-/// way. It sits on top of the merchant's own branding (the session's
-/// `branding`), which fills what it leaves out.
+/// How the sheet looks, with the keys, presets and variables of
+/// [Appearance](https://docs.wajub.com/libraries/components/appearance).
+/// The merchant's branding fills what it leaves out.
 ///
 /// ```dart
 /// const Appearance(theme: 'night', variables: AppearanceVariables(colorPrimary: '#0F766E'))
@@ -121,8 +120,7 @@ class Appearance {
   });
 
   /// `light`, `dark`, `auto`, `system` (= `auto`) name the colour scheme when
-  /// [colorScheme] is absent; `stripe`, `night`, `flat`, `none` are Wajub.js's
-  /// presets.
+  /// [colorScheme] is absent; `stripe`, `night`, `flat`, `none` are presets.
   final String? theme;
 
   /// `light`, `dark` or `auto` (follows the phone, live).
@@ -134,7 +132,7 @@ class Appearance {
   final bool inherit;
   final AppearanceVariables? variables;
 
-  /// Wajub.js's top-level keys. [primaryColor], [backgroundColor],
+  /// The top-level keys. [primaryColor], [backgroundColor],
   /// [textMutedColor], [errorColor], [successColor], [fontFamily] and
   /// [borderRadius] feed the same tokens as their [variables], which win.
   final String? primaryColor;
@@ -164,8 +162,7 @@ class Appearance {
   /// reduced-motion setting does the same.
   final bool disableAnimations;
 
-  /// Wajub.js's appearance object as a map (for instance the JSON a web and
-  /// a mobile checkout share). Key names are Wajub.js's; unknown keys,
+  /// The appearance object as a map, such as decoded JSON. Unknown keys,
   /// `rules` (CSS selectors, web only) and values of the wrong type are
   /// ignored.
   factory Appearance.fromMap(Map<String, Object?> map) {
