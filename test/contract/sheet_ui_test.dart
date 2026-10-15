@@ -285,6 +285,24 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('a present from a page already gone resolves host_gone at once and leaves the next one free',
+      (tester) async {
+    late BuildContext gone;
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) {
+      gone = context;
+      return const SizedBox();
+    })));
+    await tester.pumpWidget(const SizedBox());
+    final api = sandboxApi();
+    final result = await presentCheckout(gone, checkoutController(api));
+    expect((result as CheckoutCancelled).reason, CancelReason.hostGone);
+    expect(api.calls('/pay/cancel'), isEmpty);
+    final sheet = Sheet(sandboxApi());
+    await sheet.open(tester);
+    expect(find.byKey(const ValueKey('wajub-method-mobile_money')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('ST-05 rejects a second present', (tester) async {
     final first = Sheet(sandboxApi());
     await first.open(tester);
@@ -464,6 +482,7 @@ void main() {
       final checkout = Checkout(async, api);
       checkout.controller.selectMethod(checkout.controller.methods.first);
       checkout.run(checkout.controller.payCard);
+      checkout.controller.onAppPaused();
       checkout.run(checkout.controller.onAppResumed);
       final payment = checkout.recorder.success!;
       expect(payment.toMap(), {

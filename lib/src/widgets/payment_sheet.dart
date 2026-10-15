@@ -15,7 +15,9 @@ import 'present.dart';
 /// operators, confirmation steps, outcomes — and reports through its 1.x
 /// callbacks: [onResult] with the outcome (complete, failed, or processing
 /// when the payment is still running), [onDismiss] when the payer closes it
-/// or cancels. It never cancels the payment on Wajub by itself.
+/// or cancels, or when the payment could not load (1.x showed the load error
+/// in the sheet and reported nothing else). It never cancels the payment on
+/// Wajub by itself.
 @Deprecated('Use presentWajubCheckout, which resolves with a CheckoutResult and reports every state.')
 class PaymentSheet extends StatefulWidget {
   const PaymentSheet({
@@ -34,7 +36,7 @@ class PaymentSheet extends StatefulWidget {
   /// `fr` or `en`. Without it the sheet follows the payment's own language.
   final String? locale;
 
-  /// Called when a payment starts (its first accepted request).
+  /// Called when the payer submits a payment, before the provider answers.
   final VoidCallback? onPaymentStarted;
 
   @override
@@ -50,9 +52,8 @@ class _PaymentSheetState extends State<PaymentSheet> {
       sessionToken: widget.session.token,
       locale: widget.locale,
       cancelOnDismiss: false,
-      callbacks: CheckoutCallbacks(onPaymentStarted: (_) => widget.onPaymentStarted?.call()),
     ),
-  );
+  )..onSubmit = widget.onPaymentStarted;
 
   @override
   void initState() {
@@ -62,7 +63,7 @@ class _PaymentSheetState extends State<PaymentSheet> {
 
   void _report(CheckoutResult result) {
     if (!mounted) return;
-    final legacy = legacyResult(result);
+    final legacy = legacyResult(result, _controller);
     if (legacy == null) {
       widget.onDismiss();
     } else {
@@ -81,8 +82,9 @@ class _PaymentSheetState extends State<PaymentSheet> {
 /// [PaymentComplete], [PaymentFailed], or [PaymentProcessing] when the sheet
 /// closed while it was still running. [onCancel] is called when the payer
 /// closed the sheet (the close button, a swipe down, the back button) or
-/// cancelled before any payment; the payment is then also cancelled on
-/// Wajub (`/pay/cancel`), as the hosted checkout does.
+/// cancelled before any payment — the payment is then also cancelled on
+/// Wajub (`/pay/cancel`), as the hosted checkout does — and, as in 1.x, when
+/// the payment could not load.
 ///
 /// [locale] (`fr` or `en`) picks the sheet's language; without it the sheet
 /// follows the payment's own.
@@ -94,11 +96,10 @@ Future<void> showWajubPaymentSheet({
   VoidCallback? onCancel,
   String? locale,
 }) async {
-  final result = await presentCheckout(
-    context,
-    CheckoutController(session: session, options: PresentOptions(sessionToken: session.token, locale: locale)),
-  );
-  final legacy = legacyResult(result);
+  final controller =
+      CheckoutController(session: session, options: PresentOptions(sessionToken: session.token, locale: locale));
+  final result = await presentCheckout(context, controller);
+  final legacy = legacyResult(result, controller);
   if (legacy == null) {
     onCancel?.call();
   } else {
@@ -106,9 +107,11 @@ Future<void> showWajubPaymentSheet({
   }
 }
 
-/// A [CheckoutResult] as 1.x reported it; null for a cancelled sheet.
-PaymentResult? legacyResult(CheckoutResult result) => switch (result) {
+/// A [CheckoutResult] as 1.x reported it; null for a sheet closed without a
+/// payment: cancelled, or a payment that could not load.
+PaymentResult? legacyResult(CheckoutResult result, CheckoutController controller) => switch (result) {
       CheckoutComplete(:final transaction?) => PaymentComplete(transaction),
+      CheckoutFailed() when controller.screen == CheckoutScreen.loadError || controller.endedAtLoad => null,
       CheckoutFailed(:final error, :final transaction) => PaymentFailed(error: error, transaction: transaction),
       CheckoutProcessing(:final transaction?) => PaymentProcessing(transaction),
       _ => null,

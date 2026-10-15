@@ -91,7 +91,7 @@ void main() {
       expect(action.clientSession?.encryptionKey, isNull);
     });
 
-    test('maps confirm_otp with its otp_id to the OTP step', () {
+    test('maps confirm_otp with its otp_id to the OTP step (spec v2), unsupported in the 1.5 mapping', () {
       final raw = RawProcessResponse.fromJson({
         'code': 202,
         'status': 'Accepted',
@@ -102,7 +102,11 @@ void main() {
         'transaction': _transactionJson,
       });
 
-      final result = PaymentMapper.mapProcessResponse(raw, 'card') as PaymentRequiresAction;
+      // 1.5's mapping, kept for the calls that return it: unsupported.
+      final legacy = PaymentMapper.mapProcessResponse(raw, 'card');
+      expect((legacy as PaymentFailed).error.code, PaymentMapper.unsupportedActionCode);
+
+      final result = PaymentMapper.mapProcessAnswer(raw, 'card') as PaymentRequiresAction;
       expect(result.action, ActionKind.confirm, reason: 'the 1.5 ActionKind values are kept as they were');
       expect(result.actionUrl, isNull);
       expect(result.step, PaymentStepKind.otp);

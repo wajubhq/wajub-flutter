@@ -35,10 +35,20 @@ Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController 
     controller.dispose();
     return Future.error(WajubError.of('sheet_already_presented'));
   }
-  // Set by the pops the payer makes: the close button, a swipe down, the
-  // barrier, back. A route the host removes (a replacement, a reset of its
-  // stack) is not popped: the sheet then settles as the host going away.
+  if (!context.mounted) {
+    // The page meant to present it is already gone: settle at once.
+    controller.hostGone();
+    final result = controller.result;
+    controller.dispose();
+    return result;
+  }
+  // Only the payer's own ways out are a dismiss: the close button, back and
+  // the barrier (held by the PopScope, then popped here), and a swipe down
+  // (the sheet pops itself as the finger lifts). Any other removal — the
+  // host popping or replacing its stack — is the host going away, which
+  // never cancels the payment (states.md §5).
   var payerLeft = false;
+  var fingerLifted = false;
   final Future<void> sheet;
   try {
     sheet = showModalBottomSheet<void>(
@@ -48,15 +58,39 @@ Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController 
       backgroundColor: Colors.transparent,
       elevation: 0,
       builder: (sheetContext) {
-        // An outcome closes the sheet: pop it, unless something else covers it.
+        void leave() {
+          // Not while a cancel call runs: its answer closes the sheet.
+          if (controller.cancelling) return;
+          payerLeft = true;
+          Navigator.of(sheetContext).pop();
+        }
+
+        // An outcome closes the sheet, even under a page the host pushed.
         controller.onClose = () {
-          if (ModalRoute.of(sheetContext)?.isCurrent ?? false) Navigator.of(sheetContext).pop();
+          final route = ModalRoute.of(sheetContext);
+          if (route == null || !route.isActive) return;
+          if (route.isCurrent) {
+            Navigator.of(sheetContext).pop();
+          } else {
+            Navigator.of(sheetContext).removeRoute(route);
+          }
         };
-        return PopScope<void>(
-          onPopInvokedWithResult: (didPop, _) {
-            if (didPop) payerLeft = true;
+        return Listener(
+          onPointerUp: (_) {
+            fingerLifted = true;
+            scheduleMicrotask(() => fingerLifted = false);
           },
-          child: WajubCheckoutView(controller: controller, onDismissRequested: () => Navigator.of(sheetContext).pop()),
+          child: PopScope<void>(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop) {
+                leave();
+              } else if (fingerLifted) {
+                payerLeft = true;
+              }
+            },
+            child: WajubCheckoutView(controller: controller, onDismissRequested: leave),
+          ),
         );
       },
     );
@@ -65,6 +99,22 @@ Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController 
     rethrow;
   }
   _presented = true;
-  unawaited(sheet.then((_) => payerLeft ? controller.dismiss() : controller.hostGone()));
-  return controller.result.whenComplete(() => _presented = false);
+  // The next sheet may open as soon as this one is gone, while a dismiss's
+  // cancel call still runs.
+  var freed = false;
+  void free() {
+    if (freed) return;
+    freed = true;
+    _presented = false;
+  }
+
+  unawaited(sheet.then((_) {
+    free();
+    if (payerLeft) {
+      unawaited(controller.dismiss());
+    } else {
+      controller.hostGone();
+    }
+  }));
+  return controller.result.whenComplete(free);
 }

@@ -295,6 +295,47 @@ void main() {
   });
 
   test('CD-03 never sends raw card data in live', () {
+    expect(CheckoutController.carriesCardData({'card.number': '4242', 'cvv': '123'}), isTrue);
+    expect(CheckoutController.carriesCardData({'pin': '1234'}), isTrue);
+    expect(CheckoutController.carriesCardData({'payment_method_id': 'pm_1', 'email': 'a@b.c'}), isFalse);
+    const cardKeys = {
+      'card.number',
+      'card_number',
+      'number',
+      'cvv',
+      'cvc',
+      'pin',
+      'exp',
+      'expiry_month',
+      'expiry_year'
+    };
+    for (final (config, start) in [
+      ('sdk-config-card-cinetpay.json', 'POST /pay/process'),
+      ('sdk-config-card-mollie.json', 'POST /pay/process'),
+      ('sdk-config-card-paystack.json', 'POST /pay/client-session'),
+      ('sdk-config-cm-stripe.json', 'POST /pay/process'),
+    ]) {
+      virtual((async) {
+        // Every live card flavour: what leaves the device carries no card data.
+        final api = loading('session-cm-aggregate.json', config: config)
+          ..on('POST /pay/process', 'process-redirect-card-hosted.json')
+          ..on('POST /pay/client-session', 'client-session-start-202.json')
+          ..on('GET /pay/status', 'status-processing.json');
+        final checkout = Checkout(async, api, stripePaymentMethod: (key, holder) async => 'pm_test_1');
+        checkout.controller.selectMethod(checkout.method(MethodFamily.card));
+        for (final field in checkout.controller.cardRequiredFields) {
+          checkout.controller.setCardField(field, field == 'email' ? 'a@b.cm' : (field == 'country' ? 'CM' : 'x'));
+        }
+        checkout.controller.setCardField('card.number', '4242424242424242');
+        checkout.controller.setCardField('cvv', '123');
+        checkout.run(checkout.controller.payCard);
+        final path = start.split(' ').last;
+        final body = api.bodies(path).single;
+        final data = path == '/pay/process' ? body['data'] as Map : body;
+        expect(data.keys.toSet().intersection(cardKeys), isEmpty, reason: config);
+        checkout.end();
+      });
+    }
     virtual((async) {
       // A live session whose sdk-config offers the test-card form: no card.
       final checkout = Checkout(async, loading('session-cm-aggregate.json', config: 'sdk-config-sandbox.json'));

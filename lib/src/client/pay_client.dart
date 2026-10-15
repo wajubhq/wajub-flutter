@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:clock/clock.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
@@ -55,6 +56,10 @@ class PayClient {
   static const _maxReadRetries = 3;
   static const _maxPostRetries = 2;
   static const _maxRetryAfter = Duration(seconds: 10);
+
+  /// When the last try of `POST /pay/process` was sent (retries included).
+  DateTime? get lastProcessSentAt => _lastProcessSentAt;
+  DateTime? _lastProcessSentAt;
 
   /// The language of the [WajubError] messages: `fr` or `en`. The device's
   /// until the payment sheet sets the payment's.
@@ -251,6 +256,7 @@ class PayClient {
           ...headers,
         });
       if (encoded != null) request.body = encoded;
+      if (path == '/pay/process') _lastProcessSentAt = clock.now();
 
       http.Response response;
       try {

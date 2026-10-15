@@ -226,6 +226,30 @@ void main() {
       checkout.end();
     });
 
+    for (final (status, state) in [
+      (
+        const FakeAnswer(200, {
+          'transaction': {'reference': 'trx_PVrU8x2kQ1mNa7Lb3cDe', 'status': 'pending'}
+        }),
+        CheckoutState.failed
+      ),
+      (FakeAnswer.fixture('status-processing.json'), CheckoutState.pending),
+      (const FakeAnswer(200, <String, dynamic>{}), CheckoutState.pending),
+      (const FakeAnswer(503, <String, dynamic>{}), CheckoutState.pending),
+    ]) {
+      virtual((async) {
+        // pending: not_processable; processing, or unreadable: follow it.
+        final api = cameroon(process: 'process-400-not-processable.json', status: status);
+        final checkout = Checkout(async, api);
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        checkout.elapse(const Duration(seconds: 10));
+        expect(checkout.controller.state, state, reason: '${status.status} ${status.body}');
+        if (state == CheckoutState.failed) expect(checkout.controller.error?.code, 'not_processable');
+        checkout.end();
+      });
+    }
+
     virtual((async) {
       final checkout = Checkout(async, cameroon(process: 'error-410-process-session-ended.json'));
       checkout.mobileMoney('677123456');

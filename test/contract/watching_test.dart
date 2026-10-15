@@ -103,6 +103,46 @@ void main() {
     });
 
     virtual((async) {
+      // The cap is 15 minutes of the device's own time: an `expires_at` the
+      // device clock reads as near, or past, never ends the watch early.
+      final session = fixtureBody('session-processing-mobile-money.json');
+      (session['transaction'] as Map)['expires_at'] = '2026-10-14T09:00:30+00:00';
+      final api = FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'GET /pay/status': 'status-processing.json',
+      });
+      final checkout = Checkout(async, api);
+      expect(checkout.controller.state, CheckoutState.approvalRequired);
+      async.elapse(const Duration(minutes: 5));
+      expect(checkout.controller.capped, isFalse);
+      async.elapse(const Duration(minutes: 11));
+      expect(checkout.controller.capped, isTrue);
+      checkout.end();
+    });
+
+    virtual((async) {
+      // Counted from the press of Pay, not from the answer.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process':
+            FakeAnswer.fixture('process-processing-mobile-money-live.json', delay: const Duration(seconds: 50)),
+        'GET /pay/status': 'status-processing.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      async.elapse(const Duration(seconds: 51));
+      expect(checkout.controller.state, CheckoutState.approvalRequired);
+      async.elapse(const Duration(minutes: 14, seconds: 8));
+      expect(checkout.controller.capped, isFalse);
+      async.elapse(const Duration(seconds: 2));
+      expect(checkout.controller.capped, isTrue, reason: '15 minutes after Pay');
+      checkout.end();
+    });
+
+    virtual((async) {
       // The 15-minute cap: still processing → "you will be notified".
       final watch = Watch(async, FakeApi(routes: {'GET /pay/status': 'status-processing.json'}))..watcher.start();
       async.elapse(const Duration(minutes: 15));

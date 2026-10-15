@@ -699,7 +699,9 @@ class CancelResult {
 class PaymentStatusUpdate {
   const PaymentStatusUpdate({required this.status, this.reference, this.errorCode, this.payerMessage});
 
-  final String status;
+  /// `pending`, `processing`, `succeeded`… Null when the answer named none:
+  /// no information, never read as a refusal.
+  final String? status;
 
   /// Wajub's payment id (`trx_…`) — not the merchant's reference.
   final String? reference;
@@ -715,7 +717,7 @@ class PaymentStatusUpdate {
   factory PaymentStatusUpdate.fromJson(Map<String, dynamic> json) {
     final fields = readMap(json['transaction']) ?? json;
     return PaymentStatusUpdate(
-      status: readString(fields['status'])?.toLowerCase() ?? 'pending',
+      status: readText(fields['status'])?.toLowerCase(),
       reference: readString(fields['reference']),
       errorCode: readText(fields['error_code']),
       payerMessage: readText(fields['payer_message']),

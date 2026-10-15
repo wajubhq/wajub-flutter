@@ -163,6 +163,7 @@ CheckoutController checkoutController(
   FakeRealtime? realtime,
   String deviceLanguage = 'en',
   Future<int?> Function(AltchaChallenge challenge)? altchaSolver,
+  Future<String> Function(String publishableKey, String? cardholderName)? stripePaymentMethod,
 }) =>
     CheckoutController(
       session: api.session(options.sessionToken),
@@ -173,6 +174,9 @@ CheckoutController checkoutController(
       },
       mobileMoneyData: () async => mobileMoneyData,
       altchaSolver: altchaSolver ?? (challenge) async => null,
+      stripePaymentMethod: stripePaymentMethod,
       realtimeConnector: (realtime ?? FakeRealtime(refuse: true)).connect,
       deviceLanguage: deviceLanguage,
+      // The test's virtual clock.
+      stopwatch: clock.stopwatch,
     );

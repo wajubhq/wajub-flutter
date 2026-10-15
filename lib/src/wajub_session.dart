@@ -98,10 +98,23 @@ class WajubSession {
     return process(channelSlug, {if (returnUrl != null) 'return_url': returnUrl});
   }
 
-  /// `POST /pay/process` with [data] as given (plus the device signals).
+  /// `POST /pay/process` with [data] as given (plus the device signals),
+  /// read as 1.5 did: a confirmation step is `unsupported_action`.
   Future<PaymentResult> process(String channel, Map<String, dynamic> data, {String? idempotencyKey}) async {
     final raw = await _client.process(_token, channel, data, idempotencyKey: idempotencyKey);
     return PaymentMapper.mapProcessResponse(raw, _methodType(channel));
+  }
+
+  /// `POST /pay/process`, read as the spec v2 reads it: a confirmation step
+  /// (`confirm_otp`…) is [PaymentRequiresAction] with [ActionKind.confirm], a
+  /// [PaymentRequiresAction.step] and its `stepId` (answer it with
+  /// [verifyStep]); the sandbox 3-D Secure code is [ActionKind.confirm3ds]
+  /// with a `stepId`; an action missing what it needs is `unsupported_action`.
+  /// Give one [idempotencyKey] per press of Pay.
+  Future<PaymentResult> processPayment(String channel, Map<String, dynamic> data, {String? idempotencyKey}) async {
+    final session = await loadSession();
+    final raw = await _client.process(_token, channel, data, idempotencyKey: idempotencyKey);
+    return PaymentMapper.mapProcessAnswer(raw, _methodType(channel), fallback: session.transaction);
   }
 
   /// sdk-config `hosted_redirect` (PayPal, Mollie, Paddle, Kkiapay, FedaPay,
@@ -199,9 +212,12 @@ class WajubSession {
   /// Follows the payment until it ends: polls `GET /pay/status` and, when
   /// the session has realtime settings, listens to the payment's channel.
   /// Delivers a [PaymentProcessing] each time the status changes, then the
-  /// outcome; a session that is no longer readable (`401`, `404`, `410`)
-  /// ends the stream with its [WajubError]. Cancelling the subscription stops
-  /// the watch. [interval] is the base polling interval.
+  /// outcome: [PaymentComplete], or [PaymentFailed] whose code is the status
+  /// (`failed`, `cancelled`, `expired`) as in 1.5, or the refusal's code when
+  /// an attempt went back to `pending` without charging. A session that is no
+  /// longer readable (`401`, `403`, `404`, `410`) ends the stream with its
+  /// [WajubError]. It watches until then; cancelling the subscription stops
+  /// it. [interval] is the base polling interval.
   Stream<PaymentResult> watchStatus({
     Duration interval = PaymentWatcher.defaultInterval,
     RealtimeOptions realtime = const RealtimeOptions(),
@@ -228,11 +244,14 @@ class WajubSession {
         language: language,
         interval: interval,
         realtime: RealtimeEndpoint.resolve(session, realtime),
+        capped: false,
         seenProcessing: transaction.status == 'processing' || transaction.status == 'partial',
         onStatus: (update) {
-          transaction = transaction.copyWith(status: update.status);
-          if (update.status == lastStatus) return;
-          lastStatus = update.status;
+          final status = update.status;
+          if (status == null) return;
+          transaction = transaction.copyWith(status: status);
+          if (status == lastStatus) return;
+          lastStatus = status;
           controller.add(PaymentProcessing(transaction));
         },
         onDecision: (decision) {
@@ -243,6 +262,12 @@ class WajubSession {
             controller.add(PaymentComplete(transaction));
           } else if (error != null && const {'session_not_found', 'session_terminal_expired'}.contains(error.code)) {
             controller.addError(error);
+          } else if (error != null && status != null && status != 'pending') {
+            // 1.5's codes: the status itself.
+            controller.add(PaymentFailed(
+              error: WajubError(type: WajubErrorType.paymentError, message: status, code: status),
+              transaction: transaction,
+            ));
           } else if (error != null) {
             controller.add(PaymentFailed(error: error, transaction: transaction));
           }

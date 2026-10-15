@@ -45,8 +45,15 @@ class _WajubCheckoutViewState extends State<WajubCheckoutView> with WidgetsBindi
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Back from the browser, a wallet app or the approval prompt.
-    if (state == AppLifecycleState.resumed) unawaited(_controller.onAppResumed());
+    switch (state) {
+      case AppLifecycleState.paused || AppLifecycleState.hidden:
+        _controller.onAppPaused();
+      case AppLifecycleState.resumed:
+        // Back from the browser, a wallet app or the approval prompt.
+        unawaited(_controller.onAppResumed());
+      default:
+        break;
+    }
   }
 
   void _changed() {
@@ -119,58 +126,79 @@ class _WajubCheckoutViewState extends State<WajubCheckoutView> with WidgetsBindi
             ),
             child: SafeArea(
               top: false,
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  unit * 5,
-                  unit * 2,
-                  unit * 5,
-                  unit * 4 + MediaQuery.viewInsetsOf(context).bottom,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(color: colors.borderStrong, borderRadius: BorderRadius.circular(2)),
-                      ),
-                    ),
-                    SizedBox(height: unit * 2),
-                    _Header(controller: controller, strings: strings, onClose: widget.onDismissRequested),
-                    SizedBox(height: unit * 3),
-                    if (showSummary) ...[
-                      _Summary(controller: controller, strings: strings),
-                      SizedBox(height: unit * 5),
-                    ],
-                    AnimatedSwitcher(
-                      duration: theme.disableAnimations ? Duration.zero : const Duration(milliseconds: 200),
-                      layoutBuilder: (current, previous) => Stack(
-                        alignment: Alignment.topCenter,
-                        children: [...previous, if (current != null) current],
-                      ),
-                      child: KeyedSubtree(
-                        key: ValueKey('${controller.screen.name}-${controller.method?.family.name}'),
-                        child: _screen(controller, strings),
-                      ),
-                    ),
-                    if (branding?.whiteLabel != true) ...[
-                      SizedBox(height: unit * 5),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.lock_outline, size: theme.fontSizeHint, color: colors.textPlaceholder),
-                          SizedBox(width: unit),
-                          Text(
-                            strings.securedBy,
-                            style: TextStyle(color: colors.textPlaceholder, fontSize: theme.fontSizeHint),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // The handle and the header stay out of the scrolling part:
+                  // a swipe down on them drags the sheet away.
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(unit * 5, unit * 2, unit * 5, unit * 3),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Center(
+                          child: Container(
+                            key: const ValueKey('wajub-drag-handle'),
+                            width: 36,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: colors.borderStrong,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
                           ),
+                        ),
+                        SizedBox(height: unit * 2),
+                        _Header(controller: controller, strings: strings, onClose: widget.onDismissRequested),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                        unit * 5,
+                        0,
+                        unit * 5,
+                        unit * 4 + MediaQuery.viewInsetsOf(context).bottom,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (showSummary) ...[
+                            _Summary(controller: controller, strings: strings),
+                            SizedBox(height: unit * 5),
+                          ],
+                          AnimatedSwitcher(
+                            duration: theme.disableAnimations ? Duration.zero : const Duration(milliseconds: 200),
+                            layoutBuilder: (current, previous) => Stack(
+                              alignment: Alignment.topCenter,
+                              children: [...previous, if (current != null) current],
+                            ),
+                            child: KeyedSubtree(
+                              key: ValueKey('${controller.screen.name}-${controller.method?.family.name}'),
+                              child: _screen(controller, strings),
+                            ),
+                          ),
+                          if (branding?.whiteLabel != true) ...[
+                            SizedBox(height: unit * 5),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.lock_outline, size: theme.fontSizeHint, color: colors.textPlaceholder),
+                                SizedBox(width: unit),
+                                Text(
+                                  strings.securedBy,
+                                  style: TextStyle(color: colors.textPlaceholder, fontSize: theme.fontSizeHint),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
-                    ],
-                  ],
-                ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -233,7 +261,7 @@ class _Header extends StatelessWidget {
         IconButton(
           key: const ValueKey('wajub-dismiss'),
           tooltip: strings.close,
-          onPressed: onClose,
+          onPressed: controller.cancelling ? null : onClose,
           icon: Icon(Icons.close, color: theme.colors.textSecondary),
         ),
       ],
@@ -717,7 +745,7 @@ class _Success extends StatelessWidget {
         if (receipt != null)
           TextButton(
             key: const ValueKey('wajub-receipt'),
-            onPressed: () => unawaited(HostedRedirect.open(receipt)),
+            onPressed: () => unawaited(HostedRedirect.open(receipt).then((_) {}, onError: (Object _) {})),
             child: Text(strings.receipt),
           ),
         SizedBox(height: theme.spacingUnit * 4),

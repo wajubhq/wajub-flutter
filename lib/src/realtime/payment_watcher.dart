@@ -35,7 +35,8 @@ class WatchDecision {
 
 /// What one status says about the attempt (spec README §13.2), or null to
 /// keep watching. A `pending` counts only once the attempt was seen
-/// `processing`: before that it is the previous attempt's leftover.
+/// `processing`: before that it is the previous attempt's leftover. An answer
+/// without a status says nothing.
 WatchDecision? decideStatus(PaymentStatusUpdate update, {required bool seenProcessing, String language = 'en'}) {
   switch (update.status) {
     case 'succeeded' || 'refunded' || 'partially_refunded':
@@ -91,14 +92,15 @@ class PaymentWatcher {
     this.onStatus,
     this.realtime,
     this.seenProcessing = false,
-    DateTime? deadline,
+    Duration? cap,
+    bool capped = true,
     RealtimeConnector? connector,
     Random? random,
     this.language = 'en',
     this.interval = defaultInterval,
   })  : _client = client,
         _token = token,
-        _deadline = deadline ?? clock.now().add(overallCap),
+        _cap = capped ? cap ?? overallCap : null,
         _connector = connector,
         _random = random ?? Random();
 
@@ -112,7 +114,11 @@ class PaymentWatcher {
 
   final PayClient _client;
   final String _token;
-  final DateTime _deadline;
+
+  /// How long the watch may still run, counted by a timer (the device's
+  /// monotonic time, never its wall clock or a server timestamp). Null: no
+  /// cap (the 1.5 `watchStatus` stream watches until an outcome).
+  final Duration? _cap;
   final RealtimeConnector? _connector;
   final Random _random;
 
@@ -152,12 +158,14 @@ class PaymentWatcher {
     if (_running) return;
     _running = true;
     _lastChange = clock.now();
-    final left = _deadline.difference(clock.now());
-    if (left <= Duration.zero) {
-      _decide(const WatchDecision(WatchVerdict.capped));
-      return;
+    final left = _cap;
+    if (left != null) {
+      if (left <= Duration.zero) {
+        _decide(const WatchDecision(WatchVerdict.capped));
+        return;
+      }
+      _capTimer = Timer(left, () => _decide(const WatchDecision(WatchVerdict.capped)));
     }
-    _capTimer = Timer(left, () => _decide(const WatchDecision(WatchVerdict.capped)));
     final endpoint = realtime;
     if (endpoint != null) {
       _socket = PusherSocket(
@@ -257,6 +265,8 @@ class PaymentWatcher {
 
   /// True when [update] ended the watch.
   bool _see(PaymentStatusUpdate update) {
+    // An answer or an event without a status: nothing to go on.
+    if (update.status == null) return false;
     if (update.status != _lastStatus) {
       _lastStatus = update.status;
       _lastChange = clock.now();

@@ -100,6 +100,14 @@ void main() {
     // A restart of the SDK reads the same id from the app's storage.
     ClientInfo.reset();
     expect(await ClientInfo.installFingerprint(), fingerprint);
+
+    // A read that fails never replaces the id kept: this run uses one of its own.
+    SharedPreferences.setMockInitialValues({'flutter.wajub_mobile.install_id': 42});
+    ClientInfo.reset();
+    final volatile = await ClientInfo.installFingerprint();
+    expect(volatile, isNot(fingerprint));
+    expect(await ClientInfo.installFingerprint(), volatile, reason: 'one id for the whole run');
+    expect((await SharedPreferences.getInstance()).get('wajub_mobile.install_id'), 42);
   });
 
   test('TR-05 applies per-call timeouts', () {
@@ -275,6 +283,124 @@ void main() {
       expect(checkout.recorder.errors, isEmpty);
       expect(api.calls('/pay/status'), isNotEmpty);
       expect(checkout.controller.state, CheckoutState.success);
+      checkout.end();
+    });
+
+    // Still a plain `pending` 60 s after the last try: the request never
+    // arrived. Back to the form, retryable, and the next Pay replays the key.
+    const stillPending = FakeAnswer(200, {
+      'code': 200,
+      'status': 'OK',
+      'transaction': {'reference': 'trx_PVrU8x2kQ1mNa7Lb3cDe', 'status': 'pending'},
+    });
+    virtual((async) {
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': [
+          for (var i = 0; i < 3; i++) const FakeAnswer.network(),
+          FakeAnswer.fixture('process-processing-mobile-money-live.json'),
+        ],
+        'GET /pay/status': stillPending,
+      });
+      final checkout = Checkout(async, api, locale: 'en');
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.elapse(const Duration(seconds: 10));
+      expect(api.calls('/pay/process'), hasLength(3));
+      expect(checkout.controller.state, CheckoutState.pending);
+      checkout.elapse(const Duration(seconds: 45));
+      expect(checkout.controller.state, CheckoutState.pending, reason: 'not before 60 s after the last try');
+      checkout.elapse(const Duration(seconds: 15));
+      expect(checkout.controller.state, CheckoutState.collectingDetails);
+      expect(checkout.controller.banner, 'Connection error. Check your network.');
+      expect(checkout.recorder.errors.single.code, 'network_error');
+      expect(checkout.recorder.errors.single.retryable, isTrue);
+      expect(checkout.recorder.states, isNot(contains(CheckoutState.failed)));
+      final reads = api.calls('/pay/status').length;
+      checkout.elapse(const Duration(seconds: 30));
+      expect(api.calls('/pay/status'), hasLength(reads), reason: 'the watch stopped');
+
+      checkout.run(checkout.controller.payMobileMoney);
+      final keys = api.calls('/pay/process').map((r) => r.headers['Idempotency-Key']).toSet();
+      expect(keys, hasLength(1), reason: 'the next Pay sends the same Idempotency-Key');
+      expect(checkout.controller.state, CheckoutState.approvalRequired);
+      checkout.end();
+    });
+    virtual((async) {
+      // A whole request timing out: its last try went out 60 s before the outcome
+      // was known, so the first plain `pending` read ends the wait.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': const FakeAnswer.hang(),
+        'GET /pay/status': stillPending,
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.elapse(const Duration(minutes: 3, seconds: 10));
+      expect(checkout.controller.state, CheckoutState.collectingDetails);
+      checkout.run(checkout.controller.dismiss);
+      expect(checkout.result, isA<CheckoutCancelled>(), reason: 'no payment started: not `processing`');
+    });
+    virtual((async) {
+      // A 500 is no answer either; a refusal code left by an earlier try is not news.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': ['process-failed-402.json', 'error-500-production.json'],
+        'GET /pay/status': 'status-pending-attempt-refused-live.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.error?.code, 'insufficient_funds');
+      checkout.controller.tryAgain();
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.pending);
+      checkout.elapse(const Duration(seconds: 30));
+      expect(checkout.controller.state, CheckoutState.pending,
+          reason: 'the old insufficient_funds is not this attempt');
+      checkout.elapse(const Duration(seconds: 35));
+      expect(checkout.controller.state, CheckoutState.collectingDetails);
+      checkout.end();
+    });
+    virtual((async) {
+      // A refusal that reached the API at once: decided as that refusal.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': const FakeAnswer.network(),
+        'GET /pay/status': 'status-pending-attempt-refused-live.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.elapse(const Duration(seconds: 10));
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.error?.code, 'insufficient_funds');
+      expect(checkout.controller.error?.retryable, isTrue);
+      checkout.end();
+    });
+  });
+
+  test('TR-06 uses a new key for each Pay after a definitive answer', () {
+    virtual((async) {
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': ['process-failed-402.json', 'process-processing-mobile-money-live.json'],
+        'GET /pay/status': 'status-processing.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.controller.tryAgain();
+      checkout.run(checkout.controller.payMobileMoney);
+      final keys = api.calls('/pay/process').map((r) => r.headers['Idempotency-Key']).toList();
+      expect(keys, hasLength(2));
+      expect(keys.first, isNot(keys.last));
       checkout.end();
     });
   });

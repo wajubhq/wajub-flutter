@@ -135,11 +135,94 @@ class PaymentMapper {
         if (input.operator != null) 'operator': input.operator,
       };
 
+  /// 1.5's mapping, kept as it was for the calls that return it
+  /// ([WajubSession.process], `payMobileMoney`…): a confirmation step
+  /// (`confirm_otp`…) is `unsupported_action` there. The payment sheet, and
+  /// [WajubSession.processPayment], read the answer with [mapProcessAnswer].
+  static PaymentResult mapProcessResponse(RawProcessResponse body, String methodType) {
+    final txn = body.transaction;
+    if (txn == null) {
+      return PaymentFailed(
+        error: const WajubError(
+          type: WajubErrorType.paymentError,
+          message: 'Missing transaction',
+          code: 'invalid_response',
+        ),
+      );
+    }
+
+    if (body.action == null && _successStatuses.contains(txn.status.toLowerCase())) {
+      return PaymentComplete(txn);
+    }
+
+    switch (body.action) {
+      case 'redirect':
+        return PaymentRequiresAction(
+          action: ActionKind.redirect,
+          actionUrl: body.confirmUrl ?? body.simulatorUrl,
+          transaction: txn,
+        );
+      case 'confirm':
+        return PaymentRequiresAction(
+          action: ActionKind.confirm,
+          actionUrl: body.confirmUrl ?? body.simulatorUrl,
+          transaction: txn,
+        );
+      case 'confirm_3ds':
+        return PaymentRequiresAction(
+          action: ActionKind.confirm3ds,
+          actionUrl: body.confirmUrl ?? body.simulatorUrl,
+          transaction: txn,
+        );
+      case 'client_session':
+        final clientSession = body.clientSession;
+        if (clientSession != null) {
+          return PaymentRequiresAction(
+            action: ActionKind.clientSession,
+            actionUrl: clientSession.hostedUrl,
+            transaction: txn,
+            clientSession: clientSession,
+          );
+        }
+    }
+
+    // Any other non-null action is a step this SDK can't perform natively.
+    // Mapping it to processing would leave the payer on an endless spinner.
+    final action = body.action;
+    if (action != null) {
+      return PaymentFailed(
+        error: WajubError(
+          type: WajubErrorType.paymentError,
+          message: 'This payment requires a step the SDK cannot handle natively ($action).',
+          code: unsupportedActionCode,
+        ),
+        transaction: txn,
+      );
+    }
+
+    if (methodType == 'mobile_money') {
+      return PaymentRequiresAction(
+        action: ActionKind.pushApproval,
+        actionUrl: body.confirmUrl,
+        transaction: txn.copyWith(
+          processingContext: ProcessingContext(
+            payerInstruction: txn.processingContext?.payerInstruction,
+          ),
+        ),
+      );
+    }
+
+    return PaymentProcessing(txn, instruction: txn.processingContext?.payerInstruction);
+  }
+
   /// What one answer leaves to do (spec README §9). Decides on the action
   /// and `transaction.status`, never on `message`. [methodType]
   /// (`mobile_money`, `card`, `wallet`) tells a push approval from a wait.
-  static PaymentResult mapProcessResponse(RawProcessResponse body, String methodType) {
-    final txn = body.transaction;
+  /// A confirmation step is [ActionKind.confirm] with a
+  /// [PaymentRequiresAction.step]; an action without what it needs is
+  /// `unsupported_action`. [fallback] stands in for a missing `transaction`.
+  static PaymentResult mapProcessAnswer(RawProcessResponse body, String methodType, {SessionTransaction? fallback}) {
+    final txn = body.transaction ?? fallback;
     if (txn == null) {
       return PaymentFailed(
         error: const WajubError(

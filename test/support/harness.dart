@@ -83,6 +83,7 @@ class Checkout {
     this.browserOpens = true,
     String deviceLanguage = 'en',
     Future<int?> Function(AltchaChallenge challenge)? altchaSolver,
+    Future<String> Function(String publishableKey, String? cardholderName)? stripePaymentMethod,
     bool load = true,
   }) {
     controller = checkoutController(
@@ -103,6 +104,7 @@ class Checkout {
       realtime: sockets,
       deviceLanguage: deviceLanguage,
       altchaSolver: altchaSolver,
+      stripePaymentMethod: stripePaymentMethod,
     );
     unawaited(controller.result.then((r) => _result = r));
     if (load) {

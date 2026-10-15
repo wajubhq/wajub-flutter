@@ -321,6 +321,7 @@ void main() {
       virtual((async) {
         final api = paystack(complete: complete);
         final checkout = startClientSession(async, api);
+        checkout.controller.onAppPaused();
         checkout.run(checkout.controller.onAppResumed);
         expect(api.bodies('/pay/client-session/complete').single, {'client_session_id': 'prc_7hQm2LxV9pR4sT1wYb3N'});
         expect(checkout.controller.state, state, reason: complete);
@@ -374,6 +375,7 @@ void main() {
       final api = hostedCard(process: 'process-redirect-card-hosted.json', status: 'status-succeeded.json');
       final checkout = payByCard(async, api);
       expect(api.calls('/pay/status'), isEmpty);
+      checkout.controller.onAppPaused();
       checkout.run(checkout.controller.onAppResumed);
       expect(api.calls('/pay/status'), hasLength(1), reason: 'at once, not after the interval');
       expect(checkout.controller.state, CheckoutState.success);
@@ -467,6 +469,162 @@ void main() {
   });
 
   test('CN-04 handles a refused cancel', () {
+    // Never sent while loading, on a processing session, or while an attempt
+    // is undecided; offered again after a definitive refusal (README §14).
+    virtual((async) {
+      final api = FakeApi(routes: {
+        'GET /pay/session': FakeAnswer.fixture('session-cm-aggregate.json', delay: const Duration(seconds: 5)),
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/cancel': 'cancel-200.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.run(checkout.controller.dismiss);
+      expect((checkout.result as CheckoutCancelled).reason, CancelReason.dismissed);
+      expect(api.calls('/pay/cancel'), isEmpty, reason: 'the session had not answered');
+    });
+    for (final (session, expected, cancels) in [
+      ('session-processing-mobile-money.json', CheckoutProcessing, 0),
+      ('session-cm-aggregate.json', CheckoutCancelled, 1),
+    ]) {
+      virtual((async) {
+        // The session answered, sdk-config not yet: its status decides at once.
+        final api = FakeApi(routes: {
+          'GET /pay/session': session,
+          'GET /pay/sdk-config': FakeAnswer.fixture('sdk-config-cm-stripe.json', delay: const Duration(seconds: 5)),
+          'POST /pay/cancel': 'cancel-200.json',
+        });
+        final checkout = Checkout(async, api);
+        expect(checkout.controller.screen, CheckoutScreen.loading);
+        checkout.run(checkout.controller.dismiss);
+        expect(checkout.result.runtimeType, expected, reason: session);
+        expect(api.calls('/pay/cancel'), hasLength(cancels), reason: session);
+        checkout.elapse(const Duration(seconds: 6));
+      });
+    }
+    for (final process in ['process-processing-mobile-money-live.json', 'process-requires-otp.json']) {
+      virtual((async) {
+        // Approval and step screens: no "Cancel payment", a dismiss calls nothing.
+        final api = FakeApi(routes: {
+          'GET /pay/session': 'session-cm-aggregate.json',
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'POST /pay/process': process,
+          'GET /pay/status': 'status-processing.json',
+          'POST /pay/cancel': 'cancel-200.json',
+        });
+        final checkout = Checkout(async, api);
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        expect(checkout.controller.canCancel, isFalse, reason: process);
+        checkout.run(checkout.controller.cancelPayment);
+        checkout.run(checkout.controller.dismiss);
+        expect(checkout.result, isA<CheckoutProcessing>());
+        expect(api.calls('/pay/cancel'), isEmpty);
+      });
+    }
+    virtual((async) {
+      // Undecided from the press of Pay until a definitive answer: here a
+      // `pending` with a new error_code after it was seen processing. The
+      // payment is `pending` again: "Cancel payment" is back, and a dismiss
+      // cancels as before any attempt.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': 'process-processing-mobile-money-live.json',
+        'GET /pay/status': ['status-processing.json', 'status-pending-attempt-refused-live.json'],
+        'POST /pay/cancel': 'cancel-200.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.approvalRequired);
+      expect(checkout.controller.canCancel, isFalse);
+      checkout.elapse(const Duration(seconds: 6));
+      expect(checkout.controller.state, CheckoutState.approvalRequired, reason: 'seen processing');
+      checkout.elapse(const Duration(seconds: 5));
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.canCancel, isTrue);
+      checkout.controller.tryAgain();
+      expect(checkout.controller.canCancel, isTrue);
+      checkout.run(checkout.controller.dismiss);
+      final result = checkout.result as CheckoutCancelled;
+      expect(result.reason, CancelReason.dismissed);
+      expect(result.redirectUrl, fixtureBody('cancel-200.json')['redirect_url']);
+      expect(api.calls('/pay/cancel'), hasLength(1));
+    });
+    for (final (name, answer) in [
+      ('a 402', FakeAnswer.fixture('process-failed-402.json')),
+      ('a step failed for good', FakeAnswer.fixture('process-requires-otp.json')),
+    ]) {
+      virtual((async) {
+        final api = hostedCard(
+          process: answer,
+          more: {'POST /pay/otp/verify': 'otp-verify-max-attempts.json', 'POST /pay/cancel': 'cancel-200.json'},
+        );
+        final checkout = payByCard(async, api);
+        if (checkout.controller.state == CheckoutState.otpRequired) {
+          checkout.elapse(const Duration(seconds: 6));
+          expect(checkout.controller.canCancel, isFalse, reason: 'the watch read processing');
+          checkout.run(() => checkout.controller.submitStep({'code': '000000'}));
+        }
+        expect(checkout.controller.state, CheckoutState.failed, reason: name);
+        expect(checkout.controller.canCancel, isTrue, reason: name);
+        checkout.run(checkout.controller.cancelPayment);
+        expect((checkout.result as CheckoutCancelled).reason, CancelReason.payerCancelled, reason: name);
+        expect(api.calls('/pay/cancel'), hasLength(1), reason: name);
+      });
+    }
+    virtual((async) {
+      // A failed payment is not pending any more: nothing to cancel.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': 'process-processing-mobile-money-live.json',
+        'GET /pay/status': FakeAnswer(200, {
+          'transaction': {'reference': 'trx_PVrU8x2kQ1mNa7Lb3cDe', 'status': 'failed'},
+        }),
+        'POST /pay/cancel': 'cancel-200.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.elapse(const Duration(seconds: 6));
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.canCancel, isFalse);
+      checkout.run(checkout.controller.dismiss);
+      expect(api.calls('/pay/cancel'), isEmpty);
+    });
+    virtual((async) {
+      // A refused cancel whose status cannot be read: money may move.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/cancel': 'cancel-400-not-cancellable.json',
+        'GET /pay/status': const FakeAnswer(200, <String, dynamic>{}),
+      });
+      final checkout = Checkout(async, api);
+      checkout.run(checkout.controller.cancelPayment);
+      expect(checkout.result, isA<CheckoutProcessing>());
+    });
+    virtual((async) {
+      // While the cancel runs, nothing else is sent and Close waits for it.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/cancel': FakeAnswer.fixture('cancel-200.json', delay: const Duration(seconds: 3)),
+        'POST /pay/process': 'process-processing-mobile-money-live.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.cancelPayment);
+      expect(checkout.controller.cancelling, isTrue);
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.controller.close();
+      checkout.run(checkout.controller.dismiss);
+      expect(checkout.result, isNull);
+      checkout.elapse(const Duration(seconds: 4));
+      expect(api.calls('/pay/process'), isEmpty);
+      expect((checkout.result as CheckoutCancelled).reason, CancelReason.payerCancelled);
+    });
     virtual((async) {
       // A retried cancel refused because the first try went through.
       final api = FakeApi(routes: {
@@ -499,6 +657,39 @@ void main() {
     });
   });
 
+  test('a refusal read while the client session completes waits for /complete, and its success wins', () {
+    virtual((async) {
+      final api = paystack(
+        complete: FakeAnswer.fixture('client-session-complete-200.json', delay: const Duration(seconds: 8)),
+      )..on('GET /pay/status', 'status-pending-attempt-refused-live.json');
+      final checkout = startClientSession(async, api);
+      checkout.controller.onAppPaused();
+      checkout.run(checkout.controller.onAppResumed);
+      checkout.elapse(const Duration(seconds: 6));
+      expect(checkout.controller.state, isNot(CheckoutState.failed), reason: '/complete decides');
+      checkout.elapse(const Duration(seconds: 3));
+      expect(checkout.controller.state, CheckoutState.success);
+      expect(checkout.recorder.errors, isEmpty);
+      checkout.end();
+    });
+  });
+
+  test('a 5xx on a step verify keeps the step and reads the status', () {
+    virtual((async) {
+      final api = hostedCard(
+        process: 'process-requires-otp.json',
+        more: {'POST /pay/otp/verify': 'error-500-production.json'},
+      );
+      final checkout = payByCard(async, api);
+      final reads = api.calls('/pay/status').length;
+      checkout.run(() => checkout.controller.submitStep({'code': '123456'}));
+      expect(checkout.controller.state, CheckoutState.otpRequired);
+      expect(checkout.controller.banner, 'Service temporarily unavailable.');
+      expect(api.calls('/pay/status').length, greaterThan(reads), reason: 'polled at once');
+      checkout.end();
+    });
+  });
+
   test('an answer that comes back after the watch decided changes nothing', () {
     virtual((async) {
       // The payer is back from the PSP while the status already says paid.
@@ -507,6 +698,7 @@ void main() {
       )..on('GET /pay/status', 'status-succeeded.json');
       final checkout = startClientSession(async, api);
       checkout.elapse(const Duration(seconds: 4));
+      checkout.controller.onAppPaused();
       checkout.run(checkout.controller.onAppResumed);
       checkout.elapse(const Duration(seconds: 4));
       expect(checkout.controller.state, CheckoutState.success);
