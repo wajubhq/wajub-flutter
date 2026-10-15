@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wajub_mobile/src/models/security_challenge.dart';
 import 'package:wajub_mobile/src/checkout/altcha.dart';
 import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
@@ -10,6 +11,8 @@ import 'package:wajub_mobile/src/mapper/payment_mapper.dart';
 import 'package:wajub_mobile/src/models/json_read.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/wajub_error.dart';
+import 'package:wajub_mobile/src/wajub_session.dart';
+import 'package:wajub_mobile/src/models/payment_result.dart';
 
 import '../support/fake_api.dart';
 import '../support/fixtures.dart';
@@ -168,7 +171,7 @@ void main() {
     expect(ci.channels.first.minAmount, isNull);
     final sandbox = SessionData.fromJson(fixtureBody('session-sandbox-cm.json'));
     expect(sandbox.echo, isNull, reason: '2.1: no echo without a key');
-    expect(sandbox.altcha, isNull);
+    expect(sandbox.securityChallenge, isNull);
     final keyless = SessionData.fromJson(fixtureBody('session-processing-mobile-money.json'));
     expect(keyless.echo, isNull, reason: '2.0: echo.key null, no socket');
     expect(keyless.echoSettings?.wsHost, 'ws://localhost');
@@ -351,7 +354,7 @@ void main() {
 
   test('AL-01 solves altcha challenges', () {
     String sha(String text) => sha256.convert(utf8.encode(text)).toString();
-    final challenge = AltchaChallenge(
+    final challenge = SecurityChallenge(
       algorithm: 'SHA-256',
       challenge: sha('s4lt1234'),
       salt: 's4lt',
@@ -361,7 +364,7 @@ void main() {
     expect(solveAltcha(challenge), 1234);
     expect(
         solveAltcha(
-            AltchaChallenge(algorithm: 'SHA-256', challenge: sha('none'), salt: 's', signature: '', maxNumber: 10)),
+            SecurityChallenge(algorithm: 'SHA-256', challenge: sha('none'), salt: 's', signature: '', maxNumber: 10)),
         isNull);
 
     virtual((async) {
@@ -488,6 +491,48 @@ void main() {
       expect(checkout.controller.error?.retryable, isTrue);
       expect(checkout.controller.fieldErrors, isEmpty);
       checkout.end();
+    });
+
+    // Headless: processPayment completes the check the same way.
+    for (final (answers, expected) in [
+      (['process-422-security-check-failed.json', 'process-processing-mobile-money-live.json'], 'paid on'),
+      (['process-422-security-check-failed.json'], 'refused twice'),
+    ]) {
+      virtual((async) {
+        final api = FakeApi(routes: {
+          'GET /pay/session': [FakeAnswer(200, withChallenge('s1', 7)), FakeAnswer(200, withChallenge('s2', 42))],
+          'POST /pay/process': answers,
+        });
+        final session = WajubSession(
+          'tok_test',
+          client: api.payClient(),
+          securityChallengeSolver: (c) async => solveAltcha(c),
+        );
+        PaymentResult? result;
+        session
+            .processPayment('cm.mobile', {'phone': '+237677123456'}, idempotencyKey: 'key-1')
+            .then((r) => result = r);
+        async.elapse(const Duration(seconds: 5));
+        expect(api.bodies('/pay/process').map(numberOf), [7, 42], reason: expected);
+        final keys = api.calls('/pay/process').map((r) => r.headers['Idempotency-Key']).toList();
+        expect(keys.first, 'key-1');
+        expect(keys.last, isNot('key-1'), reason: 'a new challenge, a new key');
+        if (expected == 'paid on') {
+          expect(result, isA<PaymentRequiresAction>());
+        } else {
+          expect((result! as PaymentFailed).error.code, 'security_check_failed');
+        }
+      });
+    }
+    virtual((async) {
+      // No solution: nothing is sent.
+      final api = FakeApi(routes: {'GET /pay/session': FakeAnswer(200, withChallenge('s1', 7))});
+      final session = WajubSession('tok_test', client: api.payClient(), securityChallengeSolver: (c) async => null);
+      PaymentResult? result;
+      session.processPayment('cm.mobile', {'phone': '+237677123456'}).then((r) => result = r);
+      async.elapse(const Duration(seconds: 1));
+      expect(api.calls('/pay/process'), isEmpty);
+      expect((result! as PaymentFailed).error.code, 'security_check_failed');
     });
 
     virtual((async) {

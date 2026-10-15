@@ -12,6 +12,7 @@ import '../mobile_money/mobile_money_data.dart';
 import '../mobile_money/mobile_money_rules.dart';
 import '../mobile_money/operator_choice.dart';
 import '../models/models.dart';
+import '../models/security_challenge.dart';
 import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
 import '../realtime/payment_watcher.dart';
@@ -70,7 +71,7 @@ class CheckoutController extends ChangeNotifier {
     required this.options,
     Future<bool> Function(String url)? openUrl,
     Future<MobileMoneyData> Function()? mobileMoneyData,
-    Future<int?> Function(AltchaChallenge challenge)? altchaSolver,
+    Future<int?> Function(SecurityChallenge challenge)? altchaSolver,
     RealtimeConnector? realtimeConnector,
     String? deviceLanguage,
     Future<String> Function(String publishableKey, String? cardholderName)? stripePaymentMethod,
@@ -89,7 +90,7 @@ class CheckoutController extends ChangeNotifier {
   final PresentOptions options;
   final Future<bool> Function(String url) _openUrl;
   final Future<MobileMoneyData> Function() _loadMobileMoneyData;
-  final Future<int?> Function(AltchaChallenge challenge) _solveAltcha;
+  final Future<int?> Function(SecurityChallenge challenge) _solveAltcha;
   final RealtimeConnector? _realtimeConnector;
   final String _deviceLanguage;
 
@@ -1882,7 +1883,7 @@ class CheckoutController extends ChangeNotifier {
   // ── Altcha (README §15) ──────────────────────────────────────────────────
 
   Future<int?>? _startAltcha(SessionData loaded) {
-    final challenge = loaded.altcha;
+    final challenge = loaded.securityChallenge;
     if (challenge == null) return null;
     // In the background, from the moment the form shows.
     return _solveAltcha(challenge).catchError((Object _) => null);
@@ -1893,7 +1894,7 @@ class CheckoutController extends ChangeNotifier {
   /// brings a new challenge first. Throws when there is no solution to send:
   /// a payment never leaves without one while Altcha is on.
   Future<Map<String, Object?>?> _altchaSolution() async {
-    if (_session?.altcha == null) return null;
+    if (_session?.securityChallenge == null) return null;
     if (_altchaUsed) {
       final SessionData reloaded;
       try {
@@ -1905,7 +1906,7 @@ class CheckoutController extends ChangeNotifier {
       _altcha = _startAltcha(reloaded);
       _altchaUsed = false;
     }
-    final challenge = _session?.altcha;
+    final challenge = _session?.securityChallenge;
     if (challenge == null) return null;
     final number = await (_altcha ??= _startAltcha(_session!))!;
     if (number == null) {
@@ -1934,13 +1935,7 @@ class CheckoutController extends ChangeNotifier {
   /// submit again, then `security_check_failed` and `false`. Null when
   /// [error] is not about the challenge.
   Future<bool?> _retryAltcha(WajubError error) async {
-    // Recognised by its code; an older answer had none and only its message
-    // (`validation_error` then) told it apart.
-    final isAltcha = error.httpStatus == 422 &&
-        (error.code == 'security_check_failed' ||
-            (error.code == 'validation_error' &&
-                (error.details.containsKey('altcha') || (error.apiMessage ?? '').contains('Security challenge'))));
-    if (!isAltcha) return null;
+    if (!isSecurityRefusal(error)) return null;
     if (_altchaReloaded) {
       _fail(WajubError.of('security_check_failed', language: language, httpStatus: 422));
       return false;
@@ -1959,7 +1954,7 @@ class CheckoutController extends ChangeNotifier {
     }
   }
 
-  static Future<int?> _solveInBackground(AltchaChallenge challenge) => compute(solveAltcha, challenge);
+  static Future<int?> _solveInBackground(SecurityChallenge challenge) => compute(solveAltcha, challenge);
 
   // ── Plumbing ─────────────────────────────────────────────────────────────
 

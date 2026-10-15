@@ -41,11 +41,10 @@
   `correlationId` (the reference to quote to Wajub support), `blockReference`, `attemptsRemaining`, `httpStatus`,
   `apiMessage` and `toMap()`. An ended payment is an `invalidRequestError`; a decline code the SDK does not know
   reads "This payment could not be completed…". `WajubError.fromHttp` keeps its 1.5 mapping.
-- `PresentOptions.appearance` takes the appearance object of Wajub's web components (`Appearance`, or
-  `Appearance.fromMap` of the same JSON): variables, presets, a light, dark or automatic colour scheme, your app's
-  theme with `inherit`, and `disableAnimations`. What you leave unset comes from the merchant's branding, and white
+- `PresentOptions.appearance` sets the sheet's look (`Appearance`, or `Appearance.fromMap` of a JSON object):
+  variables, presets, a light, dark or automatic colour scheme, your app's theme with `inherit`, and
+  `disableAnimations`. What you leave unset comes from the merchant's branding, and white
   label hides "Secured by Wajub".
-- Logos that cannot be drawn fall back to their PNG version, then to the operator's badge.
 - For apps with their own UI, `WajubSession.processPayment()` returns every answer as an outcome: a confirmation
   step as `PaymentRequiresAction` with `ActionKind.confirm` and the new `step`, `stepId` and `hint`; a refusal as
   `PaymentFailed`; a payment whose outcome is unknown as `PaymentProcessing`. `verifyStep()` (whose answer gives
@@ -72,8 +71,8 @@
   safety form.
 - Requirements: Flutter 3.24 or later; Java 17, `compileSdk` 35 and `minSdk` 24 on Android; iOS 13. On Flutter
   3.24 to 3.26, pin `flutter_stripe` 11.4 (see the README). The package now depends on `flutter_svg`,
-  `shared_preferences`, `device_info_plus`, `flutter_timezone` and `web_socket_channel`, and no longer on
-  `pusher_channels_flutter`.
+  `shared_preferences`, `device_info_plus`, `flutter_timezone` and `web_socket_channel`, and drops a native
+  dependency it no longer needs.
 
 ## 1.5.1
 

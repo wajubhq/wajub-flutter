@@ -167,8 +167,9 @@ class PayClient {
     String token,
     PaymentStepKind kind,
     String stepId,
-    Map<String, String> fields,
-  ) async {
+    Map<String, String> fields, {
+    SessionTransaction? fallback,
+  }) async {
     final answer = await _send(
       'POST',
       token,
@@ -181,7 +182,9 @@ class PayClient {
       if (!result.success || result.action == null) return result;
       // Another step: its action and fields read as a 202 of /pay/process.
       return result.withNext(
-        PaymentMapper.mapProcessAnswer(RawProcessResponse.fromJson(json, httpStatus: 202), 'card'),
+        // An answer without its transaction follows the step on the payment
+        // as last read.
+        PaymentMapper.mapProcessAnswer(RawProcessResponse.fromJson(json, httpStatus: 202), 'card', fallback: fallback),
       );
     });
   }

@@ -2,6 +2,7 @@ import 'package:meta/meta.dart';
 
 import 'json_read.dart';
 import 'payment_result.dart';
+import 'security_challenge.dart';
 
 /// What the payer is doing while a payment is under way: approving it on the
 /// phone, dialling a code, or on a provider's page.
@@ -148,8 +149,8 @@ class SessionTransaction {
   /// Why the last attempt was refused, while the payment can be paid again.
   final String? errorCode;
 
-  /// Whether the answer said whether a refusal is left (older answers did
-  /// not): when false, a null [errorCode] means "not known", not "none".
+  /// Whether [errorCode] was given: when false, a null [errorCode] means
+  /// "not known", not "none".
   @internal
   final bool errorCodeKnown;
 
@@ -440,38 +441,6 @@ class Branding {
       };
 }
 
-/// A security check the payment may carry; the SDK completes it, nothing to
-/// do with it.
-class AltchaChallenge {
-  const AltchaChallenge({
-    required this.algorithm,
-    required this.challenge,
-    required this.salt,
-    required this.signature,
-    required this.maxNumber,
-  });
-
-  final String algorithm;
-  final String challenge;
-  final String salt;
-  final String signature;
-  final int maxNumber;
-
-  static AltchaChallenge? fromJson(Object? json) {
-    final map = readMap(json);
-    final challenge = readText(map?['challenge']);
-    final salt = readString(map?['salt']);
-    if (map == null || challenge == null || salt == null) return null;
-    return AltchaChallenge(
-      algorithm: readString(map['algorithm']) ?? 'SHA-256',
-      challenge: challenge,
-      salt: salt,
-      signature: readString(map['signature']) ?? '',
-      maxNumber: readInt(map['maxnumber']) ?? 1000000,
-    );
-  }
-}
-
 class SessionData {
   const SessionData({
     required this.transaction,
@@ -482,7 +451,7 @@ class SessionData {
     this.callback,
     this.sessionLocale,
     this.merchantBranding = const Branding(),
-    this.altcha,
+    this.securityChallenge,
     this.geoCountry,
     this.returnUrl,
     this.cancelUrl,
@@ -507,8 +476,9 @@ class SessionData {
   final String? sessionLocale;
   final Branding merchantBranding;
 
-  /// A security check the SDK completes before a payment.
-  final AltchaChallenge? altcha;
+  /// A security check the SDK completes by itself before a payment.
+  @internal
+  final SecurityChallenge? securityChallenge;
 
   /// The payer's country (ISO-2), when Wajub can tell.
   final String? geoCountry;
@@ -535,7 +505,7 @@ class SessionData {
       callback: readString(json['callback']),
       sessionLocale: sessionLocale,
       merchantBranding: Branding.fromJson(brandingRaw),
-      altcha: AltchaChallenge.fromJson(json['altcha']),
+      securityChallenge: SecurityChallenge.fromJson(json['altcha']),
       geoCountry: readText(json['geo_country'])?.toUpperCase(),
       returnUrl: readText(json['return_url']),
       cancelUrl: readText(json['cancel_url']),
@@ -761,8 +731,8 @@ class StepVerifyResult {
   /// it may still be `processing`).
   final SessionTransaction? transaction;
 
-  /// On success, when the provider asks for another step: its action
-  /// (`confirm_otp`, `redirect`…).
+  /// On success, when the payment asks for another step: the kind of that
+  /// step, read through [next].
   final String? action;
 
   /// That next step: [PaymentRequiresAction] with its `step` and `stepId`

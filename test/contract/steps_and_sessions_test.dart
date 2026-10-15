@@ -5,6 +5,7 @@ import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
 import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
 import 'package:wajub_mobile/src/models/models.dart';
+import 'package:wajub_mobile/src/models/payment_result.dart';
 
 import '../support/fake_api.dart';
 import '../support/fixtures.dart';
@@ -144,6 +145,19 @@ void main() {
       checkout.end();
     });
     virtual((async) {
+      // An answer without its transaction still leads to the next step.
+      final bare = fixtureBody('birthday-verify-chained-otp.json')..remove('transaction');
+      final api = hostedCard(
+        process: 'process-requires-birthday.json',
+        more: {'POST /pay/birthday/verify': FakeAnswer(200, bare)},
+      );
+      final checkout = payByCard(async, api);
+      checkout.run(() => checkout.controller.submitStep({'birthday': '1990-01-31'}));
+      expect(checkout.controller.state, CheckoutState.otpRequired);
+      expect(checkout.controller.stepId, bare['otp_id']);
+      checkout.end();
+    });
+    virtual((async) {
       // An action the SDK cannot perform.
       final unknown = fixtureBody('birthday-verify-chained-otp.json')..['action'] = 'confirm_selfie';
       final api = hostedCard(
@@ -156,9 +170,26 @@ void main() {
       expect(checkout.controller.error?.code, 'unsupported_action');
       checkout.end();
     });
-    // Headless: the next step comes with the answer.
+    // Headless: the next step comes with the answer, with or without its
+    // transaction.
     final next = StepVerifyResult.fromJson(fixtureBody('birthday-verify-chained-otp.json'));
     expect(next.action, 'confirm_otp');
+    virtual((async) {
+      final bare = fixtureBody('birthday-verify-chained-otp.json')..remove('transaction');
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'POST /pay/birthday/verify': FakeAnswer(200, bare),
+      });
+      final session = api.session();
+      StepVerifyResult? answer;
+      session
+          .loadSession()
+          .then((_) => session.verifyStep(PaymentStepKind.birthday, 'prc_1', {'birthday': '1990-01-31'}))
+          .then((r) => answer = r);
+      async.flushMicrotasks();
+      final step = answer!.next as PaymentRequiresAction;
+      expect((step.step, step.stepId), (PaymentStepKind.otp, bare['otp_id']));
+    });
   });
 
   test('CF-03 handles step refusals', () {

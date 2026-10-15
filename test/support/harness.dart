@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:wajub_mobile/src/models/security_challenge.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
 import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
 import 'package:wajub_mobile/src/checkout/present_options.dart';
-import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/wajub_error.dart';
 
 import 'fake_api.dart';
@@ -81,7 +81,7 @@ class Checkout {
     FakeRealtime? sockets,
     this.browserOpens = true,
     String deviceLanguage = 'en',
-    Future<int?> Function(AltchaChallenge challenge)? altchaSolver,
+    Future<int?> Function(SecurityChallenge challenge)? altchaSolver,
     Future<String> Function(String publishableKey, String? cardholderName)? stripePaymentMethod,
     StripeOptions stripe = const StripeOptions(),
     Future<void> Function(String appPublishableKey)? restoreStripeKey,

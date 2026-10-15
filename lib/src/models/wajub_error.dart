@@ -245,7 +245,8 @@ class WajubError implements Exception {
         attemptsRemaining: attemptsRemaining,
       );
 
-  /// The error as a JSON map, with the same keys as Wajub's web components.
+  /// The error as a JSON map (`name`, `type`, `code`, `message`…), for your
+  /// logs.
   Map<String, Object?> toMap() => {
         'name': name,
         'type': type.wireName,

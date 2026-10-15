@@ -1,11 +1,16 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'adapters/hosted_redirect.dart';
 import 'adapters/stripe_adapter.dart';
+import 'checkout/altcha.dart';
+import 'client/ids.dart';
 import 'client/pay_client.dart';
 import 'mapper/payment_mapper.dart';
 import 'models/models.dart';
 import 'models/payment_result.dart';
+import 'models/security_challenge.dart';
 import 'models/wajub_error.dart';
 import 'realtime/payment_watcher.dart';
 import 'realtime/pusher_socket.dart';
@@ -14,10 +19,18 @@ import 'realtime/pusher_socket.dart';
 /// offers, paying it, and following it to its outcome. The payment sheet
 /// (`presentWajubCheckout`) does all of this by itself.
 class WajubSession {
-  WajubSession(this._token, {PayClient? client}) : _client = client ?? PayClient();
+  WajubSession(
+    this._token, {
+    PayClient? client,
+    @visibleForTesting Future<int?> Function(SecurityChallenge challenge)? securityChallengeSolver,
+  })  : _client = client ?? PayClient(),
+        _solveChallenge = securityChallengeSolver ?? _solveInBackground;
 
   final String _token;
   final PayClient _client;
+  final Future<int?> Function(SecurityChallenge challenge) _solveChallenge;
+
+  static Future<int?> _solveInBackground(SecurityChallenge challenge) => compute(solveAltcha, challenge);
   SessionData? _cachedSession;
 
   /// The language of the [WajubError] messages: `fr` or `en`.
@@ -118,20 +131,43 @@ class WajubSession {
   ///
   /// Give one [idempotencyKey] per press of Pay, and the same one again to
   /// retry a payment whose outcome is not known: it is never charged twice.
+  /// The payment's security check is completed by itself.
   Future<PaymentResult> processPayment(String channel, Map<String, dynamic> data, {String? idempotencyKey}) async {
-    final session = await loadSession();
-    final RawProcessResponse raw;
-    try {
-      raw = await _client.process(_token, channel, data, idempotencyKey: idempotencyKey);
-    } on WajubError catch (error) {
-      final status = error.httpStatus;
-      final unanswered = status == null || status >= 500 || error.code == 'timeout' || error.code == 'network_error';
-      if (unanswered || (status == 409 && error.code == 'payment_in_progress')) {
-        return PaymentProcessing(session.transaction);
+    var session = await loadSession();
+    var key = idempotencyKey;
+    for (var renewed = false;; renewed = true) {
+      // The challenge's solution goes with the payment; a refused one is
+      // renewed once (a new challenge, so a new key), then the refusal stands.
+      final challenge = session.securityChallenge;
+      var body = data;
+      if (challenge != null) {
+        final number = await _solveChallenge(challenge).catchError((Object _) => null);
+        if (number == null) {
+          return PaymentFailed(error: WajubError.of('security_check_failed', language: language));
+        }
+        body = {...data, 'altcha': altchaPayload(challenge, number)};
       }
-      return PaymentFailed(error: error);
+      final RawProcessResponse raw;
+      try {
+        raw = await _client.process(_token, channel, body, idempotencyKey: key);
+      } on WajubError catch (error) {
+        if (isSecurityRefusal(error)) {
+          if (renewed) {
+            return PaymentFailed(error: WajubError.of('security_check_failed', language: language, httpStatus: 422));
+          }
+          session = await loadSession(forceRefresh: true);
+          key = uuidV4();
+          continue;
+        }
+        final status = error.httpStatus;
+        final unanswered = status == null || status >= 500 || error.code == 'timeout' || error.code == 'network_error';
+        if (unanswered || (status == 409 && error.code == 'payment_in_progress')) {
+          return PaymentProcessing(session.transaction);
+        }
+        return PaymentFailed(error: error);
+      }
+      return PaymentMapper.mapProcessAnswer(raw, _methodType(channel), fallback: session.transaction);
     }
-    return PaymentMapper.mapProcessAnswer(raw, _methodType(channel), fallback: session.transaction);
   }
 
   /// Pays a card on the provider's own page: returns the page to open.
@@ -193,7 +229,7 @@ class WajubSession {
   /// `{address, city, state, zip_code}`. When another step follows, it is in
   /// [StepVerifyResult.next].
   Future<StepVerifyResult> verifyStep(PaymentStepKind kind, String stepId, Map<String, String> fields) =>
-      _client.verifyStep(_token, kind, stepId, fields);
+      _client.verifyStep(_token, kind, stepId, fields, fallback: _cachedSession?.transaction);
 
   /// Asks for the step again.
   Future<void> resendStep(PaymentStepKind kind, String stepId) => _client.resendStep(_token, kind, stepId);
