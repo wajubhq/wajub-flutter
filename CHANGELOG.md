@@ -30,8 +30,10 @@
   `unsupported_action`. The sandbox 3-D Secure email code has a screen too, including the wrong-code answer the
   API sends as a 500 today. For apps with their own UI, the new `WajubSession.processPayment()` returns them as
   `PaymentRequiresAction` with `ActionKind.confirm`, no URL, and the new `step`, `stepId` and `hint`;
-  `verifyStep()`, `resendStep()`, `verifyThreeDs()` and `sendThreeDs()` answer them. The 1.5 calls (`process()`,
-  `payMobileMoney()`…) keep reading them as `unsupported_action`.
+  `verifyStep()`, `resendStep()`, `verifyThreeDs()` and `sendThreeDs()` answer them. `processPayment()` returns
+  every answer as an outcome: a refusal as `PaymentFailed`, a payment without an answer or already running as
+  `PaymentProcessing`. The 1.5 calls (`process()`, `payMobileMoney()`…) keep reading the steps as
+  `unsupported_action`.
 - Cards: the test-card form in sandbox, the contact fields a client session needs (the customer's email filled
   in), and a "Continue payment" button that reopens a provider's page. No card number is ever sent in live. The
   payer coming back to the app reads the status at once, and completes an open client session on every return.
@@ -54,12 +56,13 @@
   press of Pay). A payment whose answer never came (a network error, a timeout, a `5xx`) is followed as pending,
   never shown as failed; if the status still reads a plain `pending` 60 s after its last try, the request never
   arrived: the form comes back with a connection error, and the next Pay sends the same `Idempotency-Key`, so a
-  request that did arrive is replayed, not charged twice. A refusal the status reports meanwhile is shown as that
-  refusal; one an earlier try left is not. An answer without a status, or a `2xx` without its transaction, is
+  request that did arrive is replayed, not charged twice. The 60 s count from the call's own last try (a payment or
+  a client session) on the phone's monotonic clock. A refusal the status reports meanwhile is shown as that
+  refusal; one an earlier try left, or that the payment carried when the sheet opened, is not. An answer without a status, or a `2xx` without its transaction, is
   never read as a refusal. A `400` reads the status: an outcome is shown, a `pending` fails with
   `not_processable`, and a `processing` or unreadable status is followed. A step verify without an answer keeps
-  the step and reads the status. While a client session completes, a refusal the status reads meanwhile waits for
-  the completion, whose success always wins.
+  the step and reads the status. While a client session completes (once per return to the app), a refusal the
+  status reads meanwhile waits for the last completion, whose success always wins.
 - Every call sends `X-Wajub-Client` (`wajub-flutter/1.6.0 (android 15)`), a fresh `X-Request-Id`, the device's
   languages in `Accept-Language`, and a `User-Agent` ending with `X-Wajub-Client`; payments send the device
   signals the API's risk scoring reads (`data._client`: time zone, language, screen, colour depth, and a
@@ -71,21 +74,29 @@
   `WajubError.fromHttp` keeps its 1.5 mapping.
 - The Altcha proof of work is solved in the background and sent with the payment when the API asks for one; each
   attempt sends the solution of a new challenge, and no payment leaves without one (a challenge that cannot be
-  fetched is a connection error the payer can retry).
+  fetched is a connection error the payer can retry; one that could not be solved is replaced on the next Pay).
 - `POST /pay/cancel` is sent only while the payment's last known status is `pending` and no attempt is undecided,
   from the press of Pay to a definitive answer: "Cancel payment" is not offered while the payer approves, dials a
   USSD code, confirms a step or waits, and closing the sheet there resolves `processing` without a call. After a
-  refusal the payment is pending again and can be cancelled; closing its failure screen resolves `failed` and
-  also cancels it, so the order is released. Closing the sheet while the payment loads resolves
-  `cancelled` without a call; once the session answered, its status decides. While a cancel runs, Pay and Close
-  wait for it, and a cancel refused with a status that cannot be read resolves `processing`.
+  refusal the payment is pending again and can be cancelled; closing its failure screen (its Close button too)
+  resolves `failed` and also cancels it, so the order is released. An attempt the API accepted is never cancelled
+  before a definitive answer, even on a failure screen such as `unsupported_action`. Closing the sheet while the payment loads resolves
+  `cancelled` without a call; once the session answered, its status decides. While a cancel runs, Pay, Close, back
+  and a swipe down wait for it; a refused cancel shows what the status says, resolves `processing` when the status
+  cannot be read, and settles at once if the sheet went away meanwhile.
 - Only the payer's own ways out — the close button, a swipe down, back, the barrier — cancel an unpaid payment on a
   dismiss. A page of your app popping or replacing the sheet settles it as `host_gone` and never cancels, and a
   sheet presented from a context no longer mounted resolves `host_gone` at once. A new sheet may open as soon as
   the last one is gone, and a success screen closes even under a page your app pushed.
 - `showWajubPaymentSheet` and `PaymentSheet` are deprecated. They keep their callbacks and their 1.5 meaning —
-  `PaymentSheet.onPaymentStarted` when the payer submits, `onCancel`/`onDismiss` when the payment could not load —
-  and now draw the new sheet, reporting the outcome once the sheet closes (see the README's migration notes).
+  `PaymentSheet.onPaymentStarted` when the payer submits, `onCancel`/`onDismiss` when the payment could not load,
+  `PaymentProcessing` with the last transaction known for a payment still running, a sheet stacked over an open
+  one rather than refused — and now draw the new sheet, reporting the outcome once the sheet closes (see the
+  README's migration notes).
+- `PresentOptions.stripe` (`StripeOptions(appPublishableKey:)`) puts your app's own Stripe key back when the sheet
+  closes after its card form, which sets the merchant's.
+- `PayClient` is exported, so `Wajub.createSession(token, client: PayClient(httpClient: …))` can send the calls
+  through your own `http.Client`.
 - `WajubSession.watchStatus()` keeps 1.5's results (the status as the code of a `PaymentFailed`) and watches
   until an outcome; an attempt that goes back to `pending` without charging now ends it with the refusal's code.
 - The README lists the native minimums the new plugins bring (Java 17, `compileSdk` 35, Android `minSdk` 24, iOS
@@ -95,8 +106,9 @@
   `flutter_stripe` 11.4, whose 11.5 calls Flutter 3.27 APIs although it claims any Flutter 3.
 - New public models: `PaymentStatusUpdate` (`WajubSession.status()`), `StepVerifyResult`, `Branding`
   (`SessionData.merchantBranding`), `ChannelOperator` (`SessionChannel.operators`), `TransactionFee`,
-  `TransactionCustomer`, `AltchaChallenge`; `SessionTransaction` reads `fee`, `customer`, `receiptUrl` and its
-  timestamps, and refuses a session whose `amount` is not a number.
+  `TransactionCustomer`, `AltchaChallenge`; `SessionTransaction` reads `fee`, `customer`, `receiptUrl`,
+  `errorCode` and its timestamps, reads a missing status as `unknown` (1.5 read `pending`), and refuses a session
+  whose `amount` is not a number.
 
 ## 1.5.1
 

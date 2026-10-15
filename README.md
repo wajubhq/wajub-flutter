@@ -143,6 +143,7 @@ PresentOptions(
   realtime: const RealtimeOptions(host: 'ws.shop.example', port: 443, tls: true), // or enabled: false
   cancelOnDismiss: true,                      // a dismiss before any payment cancels it on Wajub
   autoCloseSuccess: const Duration(seconds: 3), // Duration.zero keeps the success screen
+  stripe: const StripeOptions(appPublishableKey: 'pk_live_…'), // your app's own Stripe key, if it has one
   callbacks: CheckoutCallbacks(/* … */),
 )
 ```
@@ -157,6 +158,10 @@ PresentOptions(
   no Pusher cluster setting.
 - **`cancelOnDismiss: false`** leaves the payment open when the payer closes the sheet before paying, so you can
   present it again.
+- **`stripe`**: the sheet's Stripe card form sets `flutter_stripe`'s global `Stripe.publishableKey` to the
+  merchant's key from Wajub. If your app also takes Stripe payments with its own key, give it as
+  `appPublishableKey`: the sheet puts it back (and applies Stripe's settings again) when it closes after using its
+  card form. Without it, set your key again yourself before your next Stripe call.
 
 ## Callbacks
 
@@ -210,21 +215,26 @@ phone, so:
   approves, dials a USSD code, confirms a step or waits. Closing the sheet there resolves `processing`, without a
   call.
 - After a refusal the payment is `pending` again: "Cancel payment" is back, and closing the sheet from the form
-  cancels it as before any attempt (with `cancelOnDismiss`). Closing it on the failure screen resolves `failed`
-  with the error the payer saw, and also cancels the payment (with `cancelOnDismiss`) so the order is released;
-  `onCancel` does not fire.
+  cancels it as before any attempt (with `cancelOnDismiss`). Closing it on the failure screen — its Close button,
+  the close icon, a swipe or back — resolves `failed` with the error the payer saw, and also cancels the payment
+  (with `cancelOnDismiss`) so the order is released; `onCancel` does not fire.
+- An attempt the API accepted stays undecided until such an answer: a failure the sheet cannot follow after it
+  (`unsupported_action`, `redirect_unavailable`, `3ds_timeout`) never cancels the payment.
 - Closing the sheet while the payment loads resolves `cancelled` (`dismissed`) without a call; once the session has
   answered, its status decides (`processing` resolves `processing`).
-- While a cancel runs, Pay and Close wait for it. A cancel the API refuses reads the status and resolves with it;
-  `processing` when the status cannot be read.
+- While a cancel runs, Pay, Close, back and a swipe down wait for it. A cancel the API refuses reads the status and
+  shows what it says (a success, a failure, an expired payment), or resolves `processing` when the status cannot be
+  read; if the sheet went away meanwhile, it resolves with that at once.
 
 ## Errors
 
 Every failure is a `WajubError` with Wajub.js's fields — `type` (`WajubErrorType`, `type.wireName` is
 `payment_error`…), `code`, `message` (for the payer, in the sheet's language), `declineCode`, `retryable`,
 `param` — and the mobile ones: `httpStatus`, `correlationId` (the response's `X-Request-Id`, quote it to Wajub's
-support), `retryAfterSeconds`, `details`, `blockReference`, `apiMessage` (the API's own English text). `toMap()`
-gives Wajub.js's JSON shape.
+support), `retryAfterSeconds`, `details`, `blockReference`, `apiMessage` (the API's own English text),
+`attemptsRemaining` (a confirmation step's tries left). `toMap()` gives Wajub.js's JSON shape, `localized('fr')`
+the same error with its message in another language, and `WajubError.fromStep(answer)` the error of a
+confirmation step `verifyStep()` refused.
 
 | Codes | When |
 |---|---|
@@ -278,30 +288,57 @@ timeouts and retries as the sheet.
 final session = Wajub.createSession(authorizationToken);
 final data = await session.loadSession();
 final config = await session.getSdkConfig();
+// `sdk` is a string: compare it with the SdkFlavor constants (not an enum).
+final stripeCard = config.channels['card']?.sdk == SdkFlavor.stripeElements; // keyed by channel slug
 
-// Each call has a new Idempotency-Key unless you pass one: pass the same
-// `idempotencyKey:` again only to resend a payment that got no answer.
+// One Idempotency-Key per press of Pay; pass the same one again only to resend
+// a payment that got no answer.
+final key = newIdempotencyKey(); // yours: a UUID per press of Pay
 final result = await session.processPayment(
   'cm.mobile',
   {'phone': '+237677123456', 'country': 'CM', 'operator': 'mtn'},
+  idempotencyKey: key,
 );
 switch (result) {
+  case PaymentComplete():
+    // Paid.
+    break;
+  case PaymentProcessing(kind: ProcessingKind.approval, :final instruction):
+    // Approve the push on the phone; follow the status.
+    print(instruction); // the provider's words, when it gives some
+  case PaymentProcessing(kind: ProcessingKind.ussd, :final instruction):
+    // Dial the USSD code it gives; follow the status.
+    print(instruction);
+  case PaymentProcessing():
+    // Pending, or no answer at all (network, timeout, 5xx): the charge may be
+    // running. Follow the status; if it still reads a plain `pending` 60 s
+    // later, call processPayment again with the same `key`.
+    break;
   case PaymentRequiresAction(:final step?, :final stepId?):
     // confirm_otp, confirm_pin, confirm_phone, confirm_birthday, confirm_address
     final answer = await session.verifyStep(step, stepId, {'code': '123456'});
     if (!answer.success) print(WajubError.fromStep(answer).message);
-  case PaymentRequiresAction(action: ActionKind.pushApproval):
-    // Approve on the phone: follow the status.
-  default:
+  case PaymentRequiresAction(:final actionUrl?):
+    // A provider page (3-D Secure, a wallet): open it, then follow the status.
+    await session.handleRedirectAction(result);
+    print(actionUrl);
+  case PaymentRequiresAction():
     break;
+  case PaymentFailed(:final error):
+    // A refusal (error.code, error.message for the payer, error.retryable).
+    print(error.message);
 }
 
 await for (final update in session.watchStatus()) {
   // PaymentProcessing on each change, then PaymentComplete or PaymentFailed.
+  print(update);
 }
 ```
 
-`processPayment()` reads the answer as the sheet does. The 1.5 calls — `process()`, `payMobileMoney()`,
+`processPayment()` reads the answer as the sheet does, and returns every answer as an outcome: a refusal is
+`PaymentFailed`, a payment without an answer or already running is `PaymentProcessing`; only a session that cannot
+load throws. `Wajub.createSession(token, client: PayClient(httpClient: myClient))` sends the calls through your own
+`http.Client`. The 1.5 calls — `process()`, `payMobileMoney()`,
 `payWallet()`, `payCardHostedRedirect()`, `payCard()` / `payCardWithStripeElements()`,
 `startClientSession()` / `completeClientSession()` — keep their 1.5 reading, where a confirmation step is
 `unsupported_action`. Also: `status()` (`GET /pay/status`), `resendStep()`, `verifyThreeDs()` / `sendThreeDs()`
@@ -355,6 +392,7 @@ signatures — and the 1.5 calls keep their meaning, with the differences listed
   sheet's (or the device's) language, the API's own text in `apiMessage`, a `410` as an `invalidRequestError` (it
   was `authenticationError`), a decline code the catalogue does not know read as "This payment could not be
   completed…". `WajubError.fromHttp` keeps its 1.5 mapping.
+- **`SessionTransaction.status`** reads `unknown` when an answer carries no status (1.5 read it as `pending`).
 - **`MobileMoneyInput.phone`** is sent as you give it: give it in E.164 (`+237677123456`). The sheet builds it from
   what the payer types.
 - **`watchStatus()`** keeps its results — `PaymentProcessing` on each change, `PaymentComplete`, `PaymentFailed`
@@ -379,7 +417,15 @@ To score fraud the way the web checkout does, every payment sends Wajub a few de
   or advertising identifier, and it is gone when the app is uninstalled or its data cleared.
 
 The Mobile Money number, the email and the other fields the payer types go to Wajub only to make the payment.
-Nothing is sent to anyone but Wajub (`api.wajub.com`), and the realtime socket only receives the payment's status.
+The device signals and the install fingerprint go to Wajub (`api.wajub.com`) only. Besides Wajub, the sheet
+connects to:
+
+- **Stripe**, with the Stripe card form: the card goes from Stripe's own field to Stripe, which returns a token
+  the sheet sends to Wajub; Stripe's SDK collects what Stripe documents for its fraud checks;
+- the **realtime host** the session names (Pusher, or the merchant's own Reverb or Soketi): it receives the
+  connection (the device's IP address) and the channel name, and sends the payment's status;
+- the hosts of the **operators' logos** (the URLs the session gives): plain image requests;
+- the **payment pages** of the providers, opened in the system browser when the payment needs one.
 
 What to declare:
 
