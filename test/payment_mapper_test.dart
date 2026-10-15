@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wajub_mobile/src/models/sdk_flavor.dart';
 import 'package:wajub_mobile/src/adapters/stripe_adapter.dart';
 import 'package:wajub_mobile/src/mapper/payment_mapper.dart';
 import 'package:wajub_mobile/src/models/models.dart';
@@ -157,7 +158,7 @@ void main() {
       });
       expect(config.channels['card']!.clientSession, isTrue);
       expect(config.channels['visa']!.clientSession, isFalse);
-      expect(config.channels['visa']!.sdk, SdkFlavor.adyenCustomCard);
+      expect(config.channels['visa']!.sdk, 'adyen_custom_card');
     });
   });
 

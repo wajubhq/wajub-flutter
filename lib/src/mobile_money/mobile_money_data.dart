@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../models/json_read.dart';
 
-/// The Mobile Money tables of the shared spec (`data/mobile-money.json`):
+/// The Mobile Money tables (`assets/wajub/mobile-money.json`):
 /// per country its dial code, number length, placeholder and prefix rules,
 /// per operator its name and brand badge, and the operator-independent
 /// wallets. The file ships in `assets/wajub/` and is read at first use; no

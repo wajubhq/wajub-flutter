@@ -811,6 +811,44 @@ void main() {
     });
   });
 
+  test('the sandbox flag comes from the session load; a later answer without it never lowers it', () {
+    virtual((async) {
+      Map<String, dynamic> withoutSandbox(String name) {
+        final body = fixtureBody(name);
+        (body['transaction'] as Map).remove('sandbox');
+        return body;
+      }
+
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-sandbox-cm.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': [
+          FakeAnswer(402, withoutSandbox('process-402-insufficient-funds-sandbox.json')),
+          FakeAnswer(202, withoutSandbox('process-processing-mobile-money-sandbox.json')),
+        ],
+        'GET /pay/status': const FakeAnswer(200, {
+          'transaction': {'reference': 'trx_PVrU8x2kQ1mNa7Lb3cDe', 'status': 'succeeded'},
+        }),
+      });
+      final checkout = Checkout(async, api, autoCloseSuccess: Duration.zero);
+      expect(checkout.controller.sandbox, isTrue);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.sandbox, isTrue, reason: 'a refusal without the flag');
+      checkout.controller.tryAgain();
+      // A sandbox test number the numbering plan refuses: still a sandbox session.
+      checkout.mobileMoney('+2376700000000', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(((api.bodies('/pay/process').last['data'] as Map)['phone']), '+2376700000000');
+      expect(checkout.controller.sandbox, isTrue, reason: 'an answer without the flag');
+      checkout.elapse(const Duration(seconds: 6));
+      expect(checkout.controller.state, CheckoutState.success);
+      checkout.controller.close();
+      expect((checkout.result as CheckoutComplete).transaction?.sandbox, isTrue);
+    });
+  });
+
   group('final check of 1.6.0', () {
     Future<void> settle(WidgetTester tester) async {
       await tester.pump();

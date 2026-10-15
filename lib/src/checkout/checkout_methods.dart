@@ -1,6 +1,7 @@
 import '../mapper/payment_mapper.dart';
 import '../mobile_money/operator_choice.dart';
 import '../models/models.dart';
+import '../models/sdk_flavor.dart';
 
 /// The families the sheet reports with its states (`method`).
 enum MethodFamily {
@@ -13,9 +14,9 @@ enum MethodFamily {
   final String wireName;
 }
 
-/// How the card channel is paid on mobile (spec README §7).
+/// How the card channel is paid on mobile.
 enum CardFlavour {
-  /// The PSP's hosted checkout (Paystack, Flutterwave, Adyen Pay by Link).
+  /// The card provider's own checkout.
   clientSession,
 
   /// Stripe's native card field.
@@ -41,9 +42,8 @@ CardFlavour? cardFlavour(SdkChannelConfig? config, {required bool sandbox}) {
   return null;
 }
 
-/// The contact and billing fields a hosted card PSP may ask the payer for;
-/// any other `required_fields` (Adyen's `encrypted_*`) only a web component
-/// can produce.
+/// The contact and billing fields a card provider's page may ask the payer
+/// for; any other `required_fields` only a web component can produce.
 List<String> hostedCardRequiredFields(SdkChannelConfig? config) =>
     (config?.requiredFields ?? const []).where(PaymentMapper.hostedCardFields.contains).toList();
 
@@ -85,7 +85,7 @@ class MethodLimit {
   final String currency;
 }
 
-/// What the method list offers (spec README §1, §5): Mobile Money (all its
+/// What the method list offers: Mobile Money (all its
 /// channels in one form), the card when sdk-config names a flavour this SDK
 /// can draw, and one-tap wallets — in the API's order. Anything else is not
 /// shown. [config] is null when `GET /pay/sdk-config` failed: Mobile Money

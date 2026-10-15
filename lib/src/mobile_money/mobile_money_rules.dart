@@ -1,14 +1,13 @@
 import 'mobile_money_data.dart';
 import 'operator_choice.dart';
 
-/// The Mobile Money form's rules (README §6.2–6.4, checkout.wajub's
-/// `MobileMoneyForm.tsx`): validation, mismatch, preselection by detection
-/// and the `operator` hint. Codes are errors.md §3.3's.
+/// The Mobile Money form's rules: validation, mismatch, preselection by
+/// detection and the `operator` hint, with the error catalogue's form codes.
 abstract final class MobileMoneyRules {
   /// What stops a submission, checked in this order: `phone_required`,
   /// `invalid_phone`, `operator_mismatch`, `operator_required`; null when
   /// nothing does. In [sandbox] a mismatch does not block: sandbox prefixes
-  /// do not follow real numbering plans (README §6.6).
+  /// do not follow real numbering plans.
   static String? validate({
     required MobileMoneyData data,
     required String phone,
@@ -103,7 +102,7 @@ abstract final class MobileMoneyRules {
     };
   }
 
-  /// Whether the operator list shows (README §6.2). With `operatorMode:
+  /// Whether the operator list shows. With `operatorMode:
   /// "detect"` it stays hidden until the number (6 digits or more) names no
   /// offered operator, or a wallet that takes any number is offered while the
   /// number names an operator, or the payer opens it; meanwhile

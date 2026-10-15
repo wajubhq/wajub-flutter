@@ -321,7 +321,7 @@ class _Summary extends StatelessWidget {
               ],
             ),
           ),
-          if (transaction.sandbox)
+          if (controller.sandbox)
             Container(
               padding: EdgeInsets.symmetric(horizontal: theme.spacingUnit * 2, vertical: theme.spacingUnit),
               decoration: BoxDecoration(

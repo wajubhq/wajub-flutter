@@ -61,7 +61,7 @@ enum CheckoutScreen {
   failed,
 }
 
-/// The checkout's state machine (spec states.md): loads the session, offers
+/// The checkout's state machine: loads the session, offers
 /// the methods, submits, follows the payment, and reports through the
 /// [CheckoutCallbacks] until [result] settles, exactly once. The payment
 /// sheet draws it; it holds no widget.
@@ -105,7 +105,7 @@ class CheckoutController extends ChangeNotifier {
 
   /// Monotonic time since the attempt under way began (the press of Pay, or
   /// the sheet opening on a payment already processing): the watch ends 15
-  /// minutes after it (README §13.2).
+  /// minutes after it.
   final Stopwatch _attemptClock;
 
   CheckoutCallbacks get _callbacks => options.callbacks;
@@ -227,8 +227,16 @@ class CheckoutController extends ChangeNotifier {
   String? get detectedOperatorId =>
       _country == null ? null : _mobileMoneyData?.detectOperator(_phone, _country!, sandbox: _sandbox);
 
-  /// A sandbox session: its test numbers count.
-  bool get _sandbox => _session?.transaction.sandbox ?? false;
+  /// A sandbox session, as the first session load said: its test numbers
+  /// count. A later answer never changes it.
+  bool get sandbox => _sandbox;
+  bool get _sandbox => _sandboxAtLoad ?? false;
+  bool? _sandboxAtLoad;
+
+  /// [transaction] from a later answer, with the session's environment: an
+  /// answer that does not say keeps the one the session load gave.
+  SessionTransaction _adopt(SessionTransaction transaction) =>
+      transaction.sandbox == _sandbox ? transaction : transaction.copyWith(sandbox: _sandbox);
 
   /// Hide the country selector.
   bool get countryLocked =>
@@ -267,7 +275,7 @@ class CheckoutController extends ChangeNotifier {
 
   /// In sandbox, a mismatch only warns: its message, or null.
   String? get mismatchWarning {
-    if (!(_session?.transaction.sandbox ?? false)) return null;
+    if (!_sandbox) return null;
     final detected = _mismatch();
     return detected == null ? null : _mismatchMessage(detected);
   }
@@ -359,7 +367,7 @@ class CheckoutController extends ChangeNotifier {
 
   /// The `Idempotency-Key` of a payment that got no answer: the next Pay
   /// sends it again, so a request that did reach the API is replayed, not
-  /// charged twice (README §2.5).
+  /// charged twice.
   String? _unansweredKey;
 
   /// The call of a payment without an answer (`/pay/process` or
@@ -412,7 +420,7 @@ class CheckoutController extends ChangeNotifier {
   /// `POST /pay/cancel` is sent only for a loaded session whose last known
   /// status is `pending`, while no attempt is undecided — from the press of
   /// Pay to a definitive answer: the API also cancels a `processing` payment
-  /// the payer may still approve (README §14). After a definitive refusal the
+  /// the payer may still approve. After a definitive refusal the
   /// payment is `pending` again and may be cancelled again.
   bool get _mayCancel =>
       _session != null &&
@@ -434,7 +442,7 @@ class CheckoutController extends ChangeNotifier {
   /// [attempt] is no longer the one under way, or the sheet has settled.
   bool _stale(int attempt) => settled || _closing || attempt != _attempt;
 
-  // ── Loading (README §4) ──────────────────────────────────────────────────
+  // ── Loading ──────────────────────────────────────────────────
 
   /// Loads the session and sdk-config in parallel, then shows the first
   /// screen. Called once by the sheet, and again by Retry.
@@ -481,7 +489,8 @@ class CheckoutController extends ChangeNotifier {
     // Known from now on: a dismiss decides on this status, without waiting
     // for sdk-config.
     _session = loaded;
-    _transaction = loaded.transaction;
+    _sandboxAtLoad ??= loaded.transaction.sandbox;
+    _transaction = _adopt(loaded.transaction);
     // A refusal an earlier try left on the payment is not this sheet's news.
     _lastErrorCode ??= loaded.transaction.errorCode;
     _baselineKnown = _baselineKnown || loaded.transaction.errorCodeKnown || _lastErrorCode != null;
@@ -611,7 +620,7 @@ class CheckoutController extends ChangeNotifier {
     _reportLoadError(_error!);
   }
 
-  /// A payment already in progress when the sheet opened (README §4.2).
+  /// A payment already in progress when the sheet opened.
   void _restore(SessionTransaction transaction) {
     final context = transaction.processingContext;
     _acceptedUndecided = true;
@@ -782,9 +791,9 @@ class CheckoutController extends ChangeNotifier {
     _banner = null;
   }
 
-  // ── Paying (README §6–§9, §11) ───────────────────────────────────────────
+  // ── Paying ───────────────────────────────────────────
 
-  /// Pay with the Mobile Money form: validates as the web checkout does,
+  /// Pay with the Mobile Money form: validates the number and the operator,
   /// then submits.
   Future<void> payMobileMoney() async {
     final data = _mobileMoneyData;
@@ -822,7 +831,7 @@ class CheckoutController extends ChangeNotifier {
     await _process(choice.channelSlug, request, MethodFamily.mobileMoney);
   }
 
-  /// One tap on a wallet (Djamo): nothing to collect.
+  /// One tap on a wallet: nothing to collect.
   Future<void> payWallet() async {
     final method = _method;
     if (_busy || method?.family != MethodFamily.wallet || settled) return;
@@ -902,8 +911,8 @@ class CheckoutController extends ChangeNotifier {
 
   Future<void> _process(String channel, Map<String, dynamic> data, MethodFamily family) async {
     if (_inFlight || settled || cancelling) return;
-    if (!(_session?.transaction.sandbox ?? false) && carriesCardData(data)) {
-      // The API refuses raw card data in live (README §7); never send it.
+    if (!_sandbox && carriesCardData(data)) {
+      // The API refuses raw card data in live; never send it.
       _fail(WajubError.of('raw_card_data_not_accepted', language: language));
       return;
     }
@@ -931,7 +940,7 @@ class CheckoutController extends ChangeNotifier {
 
   Future<void> _sendProcess(int attempt, String channel, Map<String, dynamic> data, MethodFamily family) async {
     // One key per press of Pay, reused by the client's own retries — and by
-    // the next press when this one got no answer (README §2.5).
+    // the next press when this one got no answer.
     final key = _unansweredKey ?? uuidV4();
     final body = {
       ...data,
@@ -1014,14 +1023,14 @@ class CheckoutController extends ChangeNotifier {
     }
   }
 
-  /// A 2xx of `/pay/process` or `/pay/client-session` (README §9).
+  /// A 2xx of `/pay/process` or `/pay/client-session`.
   void _onAnswer(RawProcessResponse raw, MethodFamily family, String channel) {
     _paymentStarted(family, channel);
     _acceptedUndecided = true;
     _unansweredKey = null;
     _unansweredPath = null;
     final transaction = raw.transaction;
-    if (transaction != null) _transaction = transaction;
+    if (transaction != null) _transaction = _adopt(transaction);
     if (raw.httpStatus == 202 || const {'processing', 'partial'}.contains(transaction?.status)) {
       _seenProcessing = true;
     }
@@ -1090,7 +1099,7 @@ class CheckoutController extends ChangeNotifier {
     }
   }
 
-  /// `onRedirect`, then the system browser — never a WebView (README §12).
+  /// `onRedirect`, then the system browser — never a WebView.
   Future<void> _redirect(String url, CheckoutState state) async {
     final attempt = _attempt;
     _continueUrl = url;
@@ -1114,7 +1123,7 @@ class CheckoutController extends ChangeNotifier {
         url, _state == CheckoutState.threeDsRequired ? CheckoutState.threeDsRequired : CheckoutState.pending);
   }
 
-  /// A refusal of `/pay/process` or `/pay/client-session` (README §9). The
+  /// A refusal of `/pay/process` or `/pay/client-session`. The
   /// attempt stays in flight until it is decided: a dismiss meanwhile
   /// resolves `processing`.
   Future<void> _onRefusal(
@@ -1130,7 +1139,7 @@ class CheckoutController extends ChangeNotifier {
     if (status == null || status >= 500 || error.code == 'server_error' || error.code == 'timeout') {
       // No answer: the charge may be running. Never a failure — watch. If
       // the status still says nothing 60 s after the last try, the request
-      // most likely never arrived (README §2.5).
+      // most likely never arrived.
       _unansweredKey = key;
       _unansweredPath = path;
       _attemptStarted = true;
@@ -1204,7 +1213,7 @@ class CheckoutController extends ChangeNotifier {
 
   static const _formErrorCodes = {'validation_error', 'invalid_phone', 'operator_mismatch', 'field_required'};
 
-  /// A 422: the form stays, its fields show what the API refused (README §9.1).
+  /// A 422: the form stays, its fields show what the API refused.
   void _showFieldErrors(WajubError error) {
     final errors = <String, String>{};
     String? banner;
@@ -1252,7 +1261,7 @@ class CheckoutController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// A `400` on a payment: the status says how it stands (README §9) —
+  /// A `400` on a payment: the status says how it stands —
   /// terminal: that outcome; `pending`: `not_processable`; `processing`, or
   /// nothing readable: an attempt may be running, follow it.
   Future<void> _settleFromStatus({required WajubError fallback}) async {
@@ -1280,7 +1289,7 @@ class CheckoutController extends ChangeNotifier {
     _watch(pollNow: true);
   }
 
-  // ── Confirmation steps (README §10) ──────────────────────────────────────
+  // ── Confirmation steps ──────────────────────────────────────
 
   void _showStep(PaymentStepKind kind, String id, String? hint) {
     _stepKind = kind;
@@ -1328,7 +1337,7 @@ class CheckoutController extends ChangeNotifier {
       _setBusy(false);
       if (answer.success) {
         final transaction = answer.transaction;
-        if (transaction != null) _transaction = transaction;
+        if (transaction != null) _transaction = _adopt(transaction);
         final next = answer.next;
         if (next != null) {
           // The provider asks for another step: followed as a payment
@@ -1432,7 +1441,7 @@ class CheckoutController extends ChangeNotifier {
     _enter(CheckoutState.threeDsRequired, CheckoutScreen.threeDs);
   }
 
-  /// The sandbox 3-D Secure email code (README §10.1).
+  /// The sandbox 3-D Secure email code.
   Future<void> submitThreeDsCode(String code) async {
     final id = _stepId;
     if (id == null || _busy || settled || cancelling || _screen != CheckoutScreen.threeDs) return;
@@ -1472,7 +1481,7 @@ class CheckoutController extends ChangeNotifier {
     }
   }
 
-  // ── Watching (README §13) ────────────────────────────────────────────────
+  // ── Watching ────────────────────────────────────────────────
 
   void _watch({bool pollNow = false}) {
     if (settled) return;
@@ -1495,8 +1504,8 @@ class CheckoutController extends ChangeNotifier {
     )..start(pollNow: pollNow);
   }
 
-  /// A status that did not decide. After a payment without an answer
-  /// (README §2.5): a `pending` with a refusal code is that payment refused
+  /// A status that did not decide. After a payment without an answer: a
+  /// `pending` with a refusal code is that payment refused
   /// at once; a plain `pending` 60 s after its last try means it never
   /// arrived.
   void _onStatus(PaymentStatusUpdate update) {
@@ -1563,7 +1572,7 @@ class CheckoutController extends ChangeNotifier {
   void onAppPaused() => _leftApp = true;
 
   /// The app came back to the foreground: complete an open client session
-  /// (on every return), otherwise read the status at once (README §12).
+  /// (on every return), otherwise read the status at once.
   Future<void> onAppResumed() async {
     if (settled) return;
     final returned = _leftApp;
@@ -1576,7 +1585,7 @@ class CheckoutController extends ChangeNotifier {
     if (_watcher?.running ?? false) _watcher!.pollNow();
   }
 
-  /// `POST /pay/client-session/complete` once the payer is back (README §11).
+  /// `POST /pay/client-session/complete` once the payer is back.
   Future<void> _completeClientSession(String id) async {
     final attempt = _attempt;
     if (!_completing) _deferredDecision = null;
@@ -1598,7 +1607,7 @@ class CheckoutController extends ChangeNotifier {
         return;
       }
       if (_stale(attempt)) return;
-      if (transaction != null) _transaction = transaction;
+      if (transaction != null) _transaction = _adopt(transaction);
       _resumeAfterCompletion();
     } on WajubError catch (e) {
       done();
@@ -1654,6 +1663,7 @@ class CheckoutController extends ChangeNotifier {
     _attempt++;
     _watcher?.stop();
     _threeDsTimer?.cancel();
+    transaction = _adopt(transaction);
     _transaction = transaction;
     _clientSessionId = null;
     _unansweredKey = null;
@@ -1708,7 +1718,7 @@ class CheckoutController extends ChangeNotifier {
     }
   }
 
-  // ── Closing (README §14, states.md §4–5) ─────────────────────────────────
+  // ── Closing ─────────────────────────────────
 
   /// "Cancel payment": cancels it on Wajub, then closes.
   Future<void> cancelPayment() async {
@@ -1737,7 +1747,7 @@ class CheckoutController extends ChangeNotifier {
   }
 
   /// A cancel refused (`400`), or a retry refused after the first try went
-  /// through: the status says how the payment stands (README §14, CN-04).
+  /// through: the status says how the payment stands.
   Future<void> _settleRefusedCancel() async {
     PaymentStatusUpdate? update;
     try {
@@ -1888,7 +1898,7 @@ class CheckoutController extends ChangeNotifier {
     }
   }
 
-  // ── Altcha (README §15) ──────────────────────────────────────────────────
+  // ── Security challenge ──────────────────────────────────────
 
   Future<int?>? _startAltcha(SessionData loaded) {
     final challenge = loaded.securityChallenge;
@@ -1900,7 +1910,7 @@ class CheckoutController extends ChangeNotifier {
   /// The challenge's solution for one request, or null when the API asks
   /// for none. A solution already sent is not sent again: a new session
   /// brings a new challenge first. Throws when there is no solution to send:
-  /// a payment never leaves without one while Altcha is on.
+  /// a payment never leaves without one while the API asks for one.
   Future<Map<String, Object?>?> _altchaSolution() async {
     if (_session?.securityChallenge == null) return null;
     if (_altchaUsed) {

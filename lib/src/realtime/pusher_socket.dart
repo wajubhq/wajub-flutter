@@ -7,7 +7,7 @@ import '../models/json_read.dart';
 import '../models/models.dart';
 import '../version.dart';
 
-/// One message pipe to a Pusher-protocol server (Pusher, Reverb, Soketi).
+/// One message pipe to the realtime server the session names.
 abstract interface class RealtimeTransport {
   Stream<String> get messages;
   void send(String message);
@@ -67,8 +67,8 @@ class RealtimeEndpoint {
 }
 
 /// A Pusher-protocol client for one private channel, over a plain WebSocket:
-/// it reaches the host and port the session names (a self-hosted Reverb as
-/// well as Pusher's cloud), authorizes the channel with the session's token,
+/// it reaches the host and port the session names, authorizes the channel
+/// with the session's token,
 /// answers pings, and reconnects with a growing delay until [stop].
 class PusherSocket {
   PusherSocket({
@@ -154,7 +154,7 @@ class PusherSocket {
         if (code != null && code >= 4000 && code < 4100) unawaited(stop());
       default:
         if (readString(frame['channel']) == endpoint.channel && !event.startsWith('pusher')) {
-          // Laravel's broadcastAs name; Echo clients prefix it with a dot.
+          // The event's name, without the leading dot some servers add.
           onEvent(event.startsWith('.') ? event.substring(1) : event, data);
         }
     }

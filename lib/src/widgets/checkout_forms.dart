@@ -131,9 +131,8 @@ String _amount(CheckoutController controller) {
   return formatAmount(transaction.payableAmount, transaction.currency, controller.language);
 }
 
-/// Country, operator and number, as the web checkout's Mobile Money form
-/// (spec README §6): the number preselects its operator until the payer
-/// picks one, and is formatted as it is typed.
+/// Country, operator and number: the number preselects its operator until
+/// the payer picks one, and is formatted as it is typed.
 class MobileMoneyForm extends StatefulWidget {
   const MobileMoneyForm({super.key, required this.controller, required this.strings});
 
@@ -519,7 +518,7 @@ int _secondsUntil(DateTime? at) =>
     at == null ? 0 : (at.difference(clock.now()).inMilliseconds / 1000).ceil().clamp(0, 1 << 30);
 
 /// A confirmation step: OTP, card PIN, phone, date of birth or billing
-/// address (spec README §10).
+/// address.
 class StepForm extends StatefulWidget {
   const StepForm({super.key, required this.controller, required this.strings});
 
@@ -646,7 +645,7 @@ class _StepFormState extends State<StepForm> {
   }
 }
 
-/// The sandbox 3-D Secure email code (spec README §10.1).
+/// The sandbox 3-D Secure email code.
 class ThreeDsForm extends StatefulWidget {
   const ThreeDsForm({super.key, required this.controller, required this.strings});
 

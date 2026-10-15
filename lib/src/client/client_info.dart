@@ -12,9 +12,9 @@ import '../version.dart';
 import 'ids.dart';
 import 'platform_web.dart' if (dart.library.io) 'platform_io.dart';
 
-/// What the SDK tells the API about the device and itself (spec README §2.2,
-/// §2.3): the `X-Wajub-Client` and `Accept-Language` headers, and the device
-/// signals sent as `data._client` on every payment, which the API's risk
+/// What the SDK tells the API about the device and itself: the
+/// `X-Wajub-Client` and `Accept-Language` headers, and the device signals
+/// sent as `data._client` on every payment, which the API's risk
 /// scoring reads.
 class ClientInfo {
   const ClientInfo({

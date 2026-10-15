@@ -1,7 +1,7 @@
 import 'json_read.dart';
 
-/// The proof of work the API may ask for before a payment (Altcha): the
-/// session's `altcha`. Internal: the SDK solves it.
+/// The proof of work the API may ask for before a payment. Internal: the SDK
+/// solves it.
 class SecurityChallenge {
   const SecurityChallenge({
     required this.algorithm,

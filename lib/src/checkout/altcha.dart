@@ -5,7 +5,7 @@ import 'package:crypto/crypto.dart';
 import '../models/security_challenge.dart';
 import '../models/wajub_error.dart';
 
-/// The proof of work the API may ask for (spec README §15): the integer `n`
+/// The proof of work the API may ask for: the integer `n`
 /// in `[0, maxnumber]` with `lowercase_hex(SHA-256(salt + n)) == challenge`,
 /// or null when there is none.
 int? solveAltcha(SecurityChallenge challenge) {

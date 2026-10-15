@@ -70,7 +70,7 @@ List<String> mobileMoneyCountries(Iterable<SessionChannel> channels) {
   return countries;
 }
 
-/// The country the form opens on (README §6.1): [requested] when a Mobile
+/// The country the form opens on: [requested] when a Mobile
 /// Money channel covers it, else [geoCountry] when one covers it, else the
 /// first country of the first Mobile Money channel. Null without one.
 String? defaultMobileMoneyCountry(Iterable<SessionChannel> channels, {String? requested, String? geoCountry}) {
@@ -86,7 +86,7 @@ String? defaultMobileMoneyCountry(Iterable<SessionChannel> channels, {String? re
   return countries.isEmpty ? null : countries.first;
 }
 
-/// The operators the payer can pick for [country] (README §6.1), from each
+/// The operators the payer can pick for [country], from each
 /// Mobile Money channel that covers it, in API order: one per member of an
 /// aggregate, one for any other channel. A repeated id keeps the first.
 /// [language] (`fr` or `en`) names a channel by `name.fr` or `name`.

@@ -48,7 +48,7 @@ Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController 
   // the barrier (held by the PopScope, then popped here), and a swipe down
   // (the sheet pops itself as the finger lifts). Any other removal — the
   // host popping or replacing its stack — is the host going away, which
-  // never cancels the payment (states.md §5).
+  // never cancels the payment.
   var payerLeft = false;
   var fingerLifted = false;
   final Future<void> sheet;

@@ -1,5 +1,6 @@
 import '../models/json_read.dart';
 import '../models/models.dart';
+import '../models/sdk_flavor.dart';
 import '../models/payment_result.dart';
 import '../models/step_keys.dart';
 import '../models/wajub_error.dart';
@@ -89,10 +90,9 @@ class PaymentMapper {
   /// `otp_id`).
   static const unsupportedActionCode = 'unsupported_action';
 
-  /// A `wallet` channel payable with a single tap — nothing to collect,
-  /// `/pay/process` answers with a redirect to the wallet's own page/app
-  /// (e.g. Djamo). Apple Pay / Google Pay / PayPal-via-Stripe need their own
-  /// SDK flavor and are excluded by `sdk: form` + no `requiredFields`.
+  /// A `wallet` channel payable with a single tap — nothing to collect, and
+  /// the answer is a redirect to the wallet's own page or app. Wallets that
+  /// need fields of their own are left out.
   static bool isRedirectWalletChannel(SessionChannel channel, SdkChannelConfig? config) =>
       channel.type.toLowerCase() == 'wallet' &&
       config != null &&
@@ -100,10 +100,9 @@ class PaymentMapper {
       config.sdk == SdkFlavor.form &&
       config.requiredFields.isEmpty;
 
-  /// Contact/billing fields a `hosted_redirect` card PSP may still need
-  /// before it opens its page — sdk-config lists the missing ones in
-  /// `required_fields` (Kkiapay/FedaPay/PayDunya: `email`; CinetPay:
-  /// `first_name` … `zip_code`).
+  /// Contact and billing fields a card provider's page may still need before
+  /// it opens — the configuration lists the missing ones in
+  /// `required_fields` (an email, or a name, phone and address).
   static const hostedCardFields = [
     'first_name',
     'last_name',
@@ -216,7 +215,7 @@ class PaymentMapper {
     return PaymentProcessing(txn, instruction: txn.processingContext?.payerInstruction);
   }
 
-  /// What one answer leaves to do (spec README §9). Decides on the action
+  /// What one answer leaves to do. Decides on the action
   /// and `transaction.status`, never on `message`. [methodType]
   /// (`mobile_money`, `card`, `wallet`) tells a push approval from a wait.
   /// A confirmation step is [ActionKind.confirm] with a

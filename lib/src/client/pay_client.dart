@@ -17,7 +17,7 @@ import 'client_info.dart';
 import 'ids.dart';
 import 'platform_web.dart' if (dart.library.io) 'platform_io.dart';
 
-/// How a call may be tried again (spec README §2.5).
+/// How a call may be tried again.
 enum _Retry {
   /// GETs: network, timeout, 408, 429 (`Retry-After` ≤ 10 s), 5xx but 501.
   read,
@@ -261,8 +261,8 @@ class PayClient {
     for (var attempt = 0;; attempt++) {
       final request = http.Request(method, uri)
         ..headers.addAll({
-          // AuthenticatePaymentSession (api.wajub) reads this via Laravel's
-          // Request::bearerToken(), which requires the literal "Bearer " prefix.
+          // The session token, after the literal "Bearer " prefix the API
+          // requires.
           'Authorization': 'Bearer $token',
           'Accept': 'application/json',
           'Accept-Language': info.acceptLanguage,

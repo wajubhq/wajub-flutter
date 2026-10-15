@@ -157,7 +157,8 @@ class SessionTransaction {
   /// The amount to show and to report: [amountTotal], else [amount].
   double get payableAmount => amountTotal ?? amount;
 
-  SessionTransaction copyWith({ProcessingContext? processingContext, String? status}) => SessionTransaction(
+  SessionTransaction copyWith({ProcessingContext? processingContext, String? status, bool? sandbox}) =>
+      SessionTransaction(
         id: id,
         reference: reference,
         trxref: trxref,
@@ -166,7 +167,7 @@ class SessionTransaction {
         currency: currency,
         status: status ?? this.status,
         statusLabel: statusLabel,
-        sandbox: sandbox,
+        sandbox: sandbox ?? this.sandbox,
         description: description,
         processingContext: processingContext ?? this.processingContext,
         bearer: bearer,
@@ -514,18 +515,6 @@ class SessionData {
   }
 }
 
-/// The values of [SdkChannelConfig.sdk]: how a payment method collects what
-/// it needs. String constants, not an enum.
-abstract final class SdkFlavor {
-  static const form = 'form';
-  static const stripeElements = 'stripe_elements';
-  static const hostedRedirect = 'hosted_redirect';
-  static const adyenCustomCard = 'adyen_custom_card';
-  static const pspInline = 'psp_inline';
-  static const paystackInline = 'paystack_inline';
-  static const flutterwaveInline = 'flutterwave_inline';
-}
-
 class SdkChannelConfig {
   const SdkChannelConfig({
     required this.available,
@@ -541,6 +530,8 @@ class SdkChannelConfig {
   /// The provider expected to take the payment; the one that does is
   /// [ClientSession.provider].
   final String? provider;
+
+  /// How the payment method collects what it needs.
   final String? sdk;
   final String? publishableKey;
   final List<String> requiredFields;
