@@ -324,6 +324,40 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('the phone field takes Arabic-Indic digits and shows them as 0-9', (tester) async {
+    final sheet = Sheet(FakeApi(routes: {
+      'GET /pay/session': 'session-cm-aggregate.json',
+      'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+    }));
+    await sheet.open(tester);
+    await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '٦٧٧١٢٣٤٥٦');
+    await tester.pump();
+    expect(find.text('67 71 23 45 6'), findsOneWidget, reason: 'shown as the digits they are');
+    expect(sheet.controller.phone, '67 71 23 45 6');
+    expect(sheet.controller.selectedOperatorId, 'mtn', reason: 'its operator recognised');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a confirmation code typed in Arabic-Indic digits shows as 0-9', (tester) async {
+    final sheet = Sheet(FakeApi(routes: {
+      'GET /pay/session': 'session-cm-aggregate.json',
+      'GET /pay/sdk-config': 'sdk-config-card-mollie.json',
+      'POST /pay/process': 'process-requires-otp.json',
+      'GET /pay/status': 'status-processing.json',
+    }));
+    await sheet.open(tester);
+    sheet.controller.selectMethod(sheet.controller.methods.firstWhere((m) => m.family == MethodFamily.card));
+    unawaited(sheet.controller.payCard());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const ValueKey('wajub-step-code')), '١٢٣٤٥٦');
+    await tester.pump();
+    expect(find.text('123456'), findsOneWidget, reason: 'the code as the payer typed it, in 0-9');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('CH-06 prefers logo_png where SVG cannot be drawn', (tester) async {
     // Flutter draws SVG: `logo` first, `logo_png` when it does not load,
     // the brand badge when neither does.

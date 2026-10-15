@@ -86,6 +86,24 @@ void main() {
     );
   });
 
+  test('reads Arabic-Indic and Persian digits as the digits they are', () {
+    const arabic = '٦٧٧١٢٣٤٥٦'; // 677123456
+    const persian = '۰۷۰۱۰۲۰۳۰۴'; // 0701020304
+    expect(MobileMoneyData.sanitize(arabic), '677123456');
+    expect(MobileMoneyData.formatAsYouType(arabic), '67 71 23 45 6');
+    expect(data.isValid(arabic, 'CM'), isTrue);
+    expect(data.detectOperator(arabic, 'CM'), 'mtn');
+    expect(data.e164(arabic, 'CM'), '+237677123456');
+    expect(data.e164('+٢٣٧ ٦٩١٢٣٤٥٦٧', 'CM'), '+237691234567');
+    expect(data.isValid(persian, 'CI'), isTrue);
+    expect(data.detectOperator(persian, 'CI'), 'orange');
+    expect(data.e164(persian, 'CI'), '+2250701020304');
+    expect(
+      MobileMoneyRules.validate(data: data, phone: arabic, country: 'CM', choiceIds: const ['mtn'], selectedId: 'mtn'),
+      isNull,
+    );
+  });
+
   test('MM-02 matches the mismatch vectors', () {
     for (final vector in (vectors()['validation_and_mismatch'] as List).cast<Map<String, dynamic>>()) {
       final phone = vector['phone'] as String;

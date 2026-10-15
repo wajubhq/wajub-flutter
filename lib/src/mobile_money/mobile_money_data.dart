@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import '../checkout/digits.dart';
 import '../models/json_read.dart';
 
 /// The Mobile Money tables (`assets/wajub/mobile-money.json`):
@@ -135,8 +136,9 @@ class MobileMoneyData {
   }
 
   /// `algorithms.sanitize`: the digits of [input], `+` and everything else
-  /// dropped.
-  static String sanitize(String input) => input.replaceAll(RegExp('[^0-9]'), '');
+  /// dropped. The digits of other scripts (Arabic-Indic, Persian…) count as
+  /// the digits they are.
+  static String sanitize(String input) => asciiDigits(input).replaceAll(RegExp('[^0-9]'), '');
 
   /// `algorithms.typed_national_digits`: the digits without the country's
   /// dial code, nothing else.

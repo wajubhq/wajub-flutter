@@ -259,7 +259,12 @@ void main() {
         more: {'POST /pay/birthday/verify': 'birthday-verify-422-format.json'},
       );
       final checkout = payByCard(async, api);
+      // A date not in YYYY-MM-DD is caught before the call.
       checkout.run(() => checkout.controller.submitStep({'birthday': '21/04/1990'}));
+      expect(api.calls('/pay/birthday/verify'), isEmpty);
+      expect(checkout.controller.fieldErrors['birthday'], isNotNull);
+      // One the API still refuses (422): its field error, the step stays.
+      checkout.run(() => checkout.controller.submitStep({'birthday': '1990-04-21'}));
       expect(checkout.controller.state, CheckoutState.birthdayRequired);
       expect(checkout.controller.fieldErrors['birthday'], 'The birthday field must match the format Y-m-d.');
       checkout.end();

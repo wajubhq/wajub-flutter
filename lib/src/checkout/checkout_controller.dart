@@ -21,6 +21,7 @@ import '../wajub_session.dart';
 import 'altcha.dart';
 import 'checkout_methods.dart';
 import 'checkout_types.dart';
+import 'digits.dart';
 import 'present_options.dart';
 
 /// What the sheet draws.
@@ -763,7 +764,7 @@ class CheckoutController extends ChangeNotifier {
   }
 
   void setCardField(String key, String value) {
-    _cardFields[key] = value;
+    _cardFields[key] = asciiDigits(value);
     if (_fieldErrors.containsKey(key) || _fieldErrors.containsKey('data.$key')) {
       _fieldErrors = Map.of(_fieldErrors)
         ..remove(key)
@@ -877,6 +878,15 @@ class CheckoutController extends ChangeNotifier {
     if (field == 'country' && !RegExp(r'^[A-Za-z]{2}$').hasMatch(text)) {
       return ErrorCatalogue.text(ErrorCatalogue.lookup('validation_error')!, language);
     }
+    // The test card's numbers: digits only (a card number may have spaces).
+    final digits = switch (field) {
+      'card.number' => isAsciiDigits(text.replaceAll(' ', ''), min: 12, max: 19),
+      'expiry_month' => isAsciiDigits(text, max: 2),
+      'expiry_year' => isAsciiDigits(text, min: 2, max: 4),
+      'cvv' => isAsciiDigits(text, min: 3, max: 4),
+      _ => true,
+    };
+    if (!digits) return ErrorCatalogue.text(ErrorCatalogue.lookup('validation_error')!, language);
     return null;
   }
 
@@ -1315,10 +1325,14 @@ class CheckoutController extends ChangeNotifier {
     final kind = _stepKind;
     final id = _stepId;
     if (kind == null || id == null || _busy || settled || cancelling) return;
+    // Digits of any script are written 0-9; a code is digits only.
+    fields = {for (final entry in fields.entries) entry.key: asciiDigits(entry.value.trim())};
     final missing = {
       for (final entry in fields.entries)
-        if (entry.value.trim().isEmpty)
-          entry.key: ErrorCatalogue.text(ErrorCatalogue.lookup('field_required')!, language),
+        if (entry.value.isEmpty)
+          entry.key: ErrorCatalogue.text(ErrorCatalogue.lookup('field_required')!, language)
+        else if (_stepFieldError(entry.key, entry.value) case final error?)
+          entry.key: error,
     };
     if (missing.isNotEmpty) {
       _fieldErrors = missing;
@@ -1331,7 +1345,7 @@ class CheckoutController extends ChangeNotifier {
     _enter(CheckoutState.verifying, CheckoutScreen.step);
     try {
       final answer = await session.verifyStep(kind, id, {
-        for (final entry in fields.entries) entry.key: entry.value.trim(),
+        for (final entry in fields.entries) entry.key: entry.value,
       });
       if (_stale(attempt)) return;
       _setBusy(false);
@@ -1375,6 +1389,19 @@ class CheckoutController extends ChangeNotifier {
       _setBusy(false);
       _onStepRefusal(e.localized(language), _stepState(kind));
     }
+  }
+
+  /// A step's code, PIN or date that is not what it should be: its message.
+  String? _stepFieldError(String field, String value) {
+    final ok = switch (field) {
+      'code' => isAsciiDigits(value, min: 4, max: 10),
+      'pin' => isAsciiDigits(value, min: 4, max: 6),
+      'birthday' => RegExp(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}$').hasMatch(value),
+      _ => true,
+    };
+    if (ok) return null;
+    return ErrorCatalogue.text(
+        ErrorCatalogue.lookup(field == 'birthday' ? 'validation_error' : 'invalid_code')!, language);
   }
 
   void _onStepRefusal(WajubError error, CheckoutState stay) {
@@ -1445,7 +1472,8 @@ class CheckoutController extends ChangeNotifier {
   Future<void> submitThreeDsCode(String code) async {
     final id = _stepId;
     if (id == null || _busy || settled || cancelling || _screen != CheckoutScreen.threeDs) return;
-    if (code.trim().length < 4 || code.trim().length > 8) {
+    code = asciiDigits(code.trim());
+    if (!isAsciiDigits(code, min: 4, max: 8)) {
       _fieldErrors = {'code': ErrorCatalogue.text(ErrorCatalogue.lookup('invalid_code')!, language)};
       notifyListeners();
       return;
@@ -1455,7 +1483,7 @@ class CheckoutController extends ChangeNotifier {
     _setBusy(true);
     _enter(CheckoutState.verifying, CheckoutScreen.threeDs);
     try {
-      await session.verifyThreeDs(id, code.trim());
+      await session.verifyThreeDs(id, code);
       if (_stale(attempt)) return;
       // Accepted: the provider decides now; the screen waits on the status,
       // and the code's own deadline no longer applies.

@@ -7,6 +7,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../appearance/wajub_theme.dart';
 import '../checkout/checkout_controller.dart';
+import '../checkout/digits.dart';
 import '../checkout/checkout_methods.dart';
 import '../errors/error_catalogue.dart';
 import '../mobile_money/mobile_money_data.dart';
@@ -454,6 +455,7 @@ class _FieldState extends State<_Field> {
       controller: _text,
       enabled: !widget.controller.busy,
       keyboardType: widget.keyboard,
+      inputFormatters: const [AsciiDigitsFormatter()],
       obscureText: widget.obscure,
       textCapitalization: widget.name == 'country' ? TextCapitalization.characters : TextCapitalization.none,
       style: TextStyle(fontSize: WajubTheme.of(context).inputFontSize),
@@ -611,9 +613,17 @@ class _StepFormState extends State<StepForm> {
               _ => TextInputType.text,
             },
             inputFormatters: switch (name) {
-              'code' => [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(10)],
-              'pin' => [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
-              _ => null,
+              'code' => [
+                  const AsciiDigitsFormatter(),
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(10)
+                ],
+              'pin' => [
+                  const AsciiDigitsFormatter(),
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6)
+                ],
+              _ => [const AsciiDigitsFormatter()],
             },
             style: TextStyle(fontSize: theme.inputFontSize),
             decoration: InputDecoration(
@@ -705,7 +715,11 @@ class _ThreeDsFormState extends State<ThreeDsForm> {
           controller: _code,
           enabled: !busy,
           keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(8)],
+          inputFormatters: [
+            const AsciiDigitsFormatter(),
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(8)
+          ],
           style: TextStyle(fontSize: theme.inputFontSize),
           decoration: InputDecoration(labelText: strings.field('code'), errorText: controller.fieldErrors['code']),
           onSubmitted: (_) => submit(),

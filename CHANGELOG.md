@@ -37,6 +37,8 @@ Everything that changed since 1.1.1.
   running; on the failure screen, `failed`, and the payment is cancelled when it still can be. "Cancel payment" is
   offered only while no payment is under way. When the page that presented the sheet goes away, the sheet resolves
   without cancelling anything.
+- Numbers and codes typed with the digits of another script (an Arabic or Persian keyboard, for instance) are
+  taken as the digits they are; a code that is not made of digits is refused before anything is sent.
 - The sheet never shows a failure when the outcome is unknown: it shows "Payment in progress", and closing it then
   resolves `processing`. Paying again after a connection error never charges twice.
 - `PresentOptions.appearance` sets the sheet's look (`Appearance`, or `Appearance.fromMap` of a JSON object):
