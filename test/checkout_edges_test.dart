@@ -141,7 +141,7 @@ void main() {
     test('a realtime frame without a status decides nothing', () {
       virtual((async) {
         final session = SessionData.fromJson(fixtureBody('session-cm-aggregate.json'));
-        final endpoint = RealtimeEndpoint.resolve(session, const RealtimeOptions())!;
+        final endpoint = RealtimeEndpoint.resolve(session)!;
         final sockets = FakeRealtime();
         final decisions = <WatchDecision>[];
         final watcher = PaymentWatcher(

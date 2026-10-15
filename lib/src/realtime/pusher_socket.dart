@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../checkout/present_options.dart';
 import '../models/json_read.dart';
 import '../models/models.dart';
 import '../version.dart';
@@ -18,8 +17,7 @@ abstract interface class RealtimeTransport {
 /// Opens a [RealtimeTransport] to [uri]; throws when it cannot.
 typedef RealtimeConnector = Future<RealtimeTransport> Function(Uri uri);
 
-/// Where the payment's realtime updates are published: the session's `echo`,
-/// overridden by [RealtimeOptions].
+/// Where the payment's realtime updates are published: the session's `echo`.
 class RealtimeEndpoint {
   const RealtimeEndpoint({
     required this.key,
@@ -46,21 +44,18 @@ class RealtimeEndpoint {
         queryParameters: {'protocol': '7', 'client': 'wajub-flutter', 'version': wajubSdkVersion, 'flash': 'false'},
       );
 
-  /// Null when the session names no usable socket (no `echo`, no key) or the
-  /// app turned realtime off: the payment is then followed by polling only.
-  static RealtimeEndpoint? resolve(SessionData session, RealtimeOptions options) {
+  /// Null when the session names no usable socket (no `echo`, no key): the
+  /// payment is then followed by polling only.
+  static RealtimeEndpoint? resolve(SessionData session) {
     final echo = session.echoSettings ?? session.echo;
-    if (!options.enabled || echo == null || echo.key.trim().isEmpty) return null;
+    if (echo == null || echo.key.trim().isEmpty) return null;
     // `ws_host` carries the scheme: `wss://` is TLS, `ws://` plain.
-    final configured = Uri.tryParse(echo.wsHost.contains('://') ? echo.wsHost : '//${echo.wsHost}');
-    final override =
-        options.host == null ? null : Uri.tryParse(options.host!.contains('://') ? options.host! : '//${options.host}');
-    final source = override ?? configured;
+    final source = Uri.tryParse(echo.wsHost.contains('://') ? echo.wsHost : '//${echo.wsHost}');
     final host = source?.host ?? '';
     if (host.isEmpty) return null;
-    final port = options.port ?? (override != null && override.hasPort ? override.port : echo.wsPort);
+    final port = echo.wsPort;
     final scheme = source!.scheme;
-    final tls = options.tls ?? (scheme.isEmpty ? port == 443 : scheme == 'wss' || scheme == 'https');
+    final tls = scheme.isEmpty ? port == 443 : scheme == 'wss' || scheme == 'https';
     return RealtimeEndpoint(
       key: echo.key,
       host: host,

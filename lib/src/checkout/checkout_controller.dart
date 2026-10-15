@@ -289,6 +289,9 @@ class CheckoutController extends ChangeNotifier {
   /// `otp_masked_contact` or the step's instruction (English), or the masked
   /// email of the 3-D Secure code.
   String? get stepHint => _stepHint;
+
+  /// The processing id the step's verify sends (`otp_id`…).
+  String? get stepId => _stepId;
   int? _attemptsRemaining;
   int? get attemptsRemaining => _attemptsRemaining;
   DateTime? _resendAt;
@@ -1308,13 +1311,22 @@ class CheckoutController extends ChangeNotifier {
       if (answer.success) {
         final transaction = answer.transaction;
         if (transaction != null) _transaction = transaction;
+        final next = answer.next;
+        if (next != null) {
+          // The provider asks for another step: followed as a payment
+          // answer (its own screen and attempts, or its page); paid only
+          // when a status says so.
+          if (const {'processing', 'partial'}.contains(transaction?.status)) _seenProcessing = true;
+          _handle(next);
+          return;
+        }
         switch (transaction?.status) {
           case 'succeeded':
+            // A step the provider settles at once.
             _succeed(transaction!, method: _family);
           case 'failed':
             _fail(WajubError.of('payment_failed', language: language));
           default:
-            // A provider may chain steps the API cannot show yet: wait.
             _enter(CheckoutState.pending, CheckoutScreen.pending);
             _watcher?.pollNow();
         }
@@ -1456,7 +1468,7 @@ class CheckoutController extends ChangeNotifier {
       client: session.client,
       token: session.token,
       language: language,
-      realtime: RealtimeEndpoint.resolve(loaded, options.realtime),
+      realtime: RealtimeEndpoint.resolve(loaded),
       connector: _realtimeConnector,
       seenProcessing: _seenProcessing,
       cap: _attemptClock.isRunning ? PaymentWatcher.overallCap - _attemptClock.elapsed : null,
@@ -1904,8 +1916,12 @@ class CheckoutController extends ChangeNotifier {
   /// submit again, then `security_check_failed` and `false`. Null when
   /// [error] is not about the challenge.
   Future<bool?> _retryAltcha(WajubError error) async {
+    // Recognised by its code; an older answer had none and only its message
+    // (`validation_error` then) told it apart.
     final isAltcha = error.httpStatus == 422 &&
-        (error.details.containsKey('altcha') || (error.apiMessage ?? '').contains('Security challenge'));
+        (error.code == 'security_check_failed' ||
+            (error.code == 'validation_error' &&
+                (error.details.containsKey('altcha') || (error.apiMessage ?? '').contains('Security challenge'))));
     if (!isAltcha) return null;
     if (_altchaReloaded) {
       _fail(WajubError.of('security_check_failed', language: language, httpStatus: 422));

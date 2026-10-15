@@ -550,7 +550,6 @@ class _MethodTile extends StatelessWidget {
     final limitText = limit == null
         ? null
         : (limit.minimum ? strings.minimum : strings.maximum)(formatAmount(limit.amount, limit.currency, language));
-    final logo = method.channels.isEmpty ? null : method.channel.logo;
     final icon = Icon(
       switch (method.family) {
         MethodFamily.mobileMoney => Icons.phone_iphone,
@@ -581,7 +580,16 @@ class _MethodTile extends StatelessWidget {
               children: [
                 SizedBox.square(
                   dimension: 32,
-                  child: logo == null ? icon : NetworkLogo(url: logo, width: 32, height: 32, fallback: icon),
+                  child: (method.channels.isEmpty
+                          ? null
+                          : NetworkLogo.of(
+                              logo: method.channel.logo,
+                              logoPng: method.channel.logoPng,
+                              width: 32,
+                              height: 32,
+                              fallback: icon,
+                            )) ??
+                      icon,
                 ),
                 SizedBox(width: theme.spacingUnit * 3),
                 Expanded(

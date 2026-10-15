@@ -143,14 +143,19 @@ List<CheckoutMethod> buildMethods(SessionData session, SdkConfig? config) {
   return methods;
 }
 
-/// A Mobile Money channel without an sdk-config entry (sandbox, or a failed
-/// sdk-config) is a form asking for the phone; an aggregate reads its
-/// members' entries; `available: false` hides it.
+/// sdk-config is looked up by the session's slug: an aggregate (`cm.mobile`)
+/// uses its own entry, else — an older answer — its members' (`cm.mtn`,
+/// `cm.orange`). A Mobile Money channel without any entry (a failed
+/// sdk-config, or an older sandbox answer) is a form asking for the phone;
+/// `available: false` hides it.
 bool _mobileMoneyAvailable(SessionChannel channel, SdkConfig? config) {
   if (config == null) return true;
-  final slugs = channel.isAggregate ? channel.operators.map((o) => o.slug) : [channel.slug];
-  final entries = slugs.map((slug) => config.channels[slug]).whereType<SdkChannelConfig>().toList();
-  return entries.isEmpty || entries.any((entry) => entry.available);
+  final own = config.channels[channel.slug];
+  if (own != null) return own.available;
+  if (!channel.isAggregate) return true;
+  final members =
+      channel.operators.map((member) => config.channels[member.slug]).whereType<SdkChannelConfig>().toList();
+  return members.isEmpty || members.any((entry) => entry.available);
 }
 
 MethodLimit? _limit(SessionChannel channel, double amount, String currency) {

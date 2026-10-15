@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wajub_mobile/src/checkout/altcha.dart';
+import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
 import 'package:wajub_mobile/src/mapper/payment_mapper.dart';
 import 'package:wajub_mobile/src/models/json_read.dart';
@@ -48,7 +49,7 @@ Map<String, dynamic> withUnknownKeys(Map<String, dynamic> body) {
 void main() {
   test('PR-01 parses every fixture', () {
     final names = fixtureNames();
-    expect(names, hasLength(92));
+    expect(names, hasLength(97));
     for (final name in names) {
       expect(() => parseFixture(name), returnsNormally, reason: name);
     }
@@ -59,6 +60,14 @@ void main() {
     expect(process.threeDsTimeout, 600);
     final step = parseFixture('otp-verify-invalid.json') as StepVerifyResult;
     expect((step.success, step.attemptsRemaining, step.errorCode), (false, 2, 'invalid_otp'));
+    final chained = parseFixture('birthday-verify-chained-otp.json') as StepVerifyResult;
+    expect((chained.success, chained.action), (true, 'confirm_otp'));
+    final status = parseFixture('status-processing.json') as PaymentStatusUpdate;
+    expect((status.errorCode, status.payerMessage), (null, null), reason: '2.1: always there, null');
+    final logos = session.channels.last;
+    expect(logos.logoPng, 'https://api.wajub.com/img/channels/momo.png');
+    expect(logos.operators.last.logoPng, 'https://api.wajub.com/img/channels/om.png');
+    expect(session.transaction.errorCode, isNull);
     final event = parseFixture('realtime-payment-status-updated-refused.json') as PaymentStatusUpdate;
     expect((event.status, event.errorCode), ('pending', 'insufficient_funds'));
   });
@@ -121,11 +130,15 @@ void main() {
   });
 
   test('PR-05 parses branding with mixed types', () {
+    // 2.1 sends the weights as integers, 2.0 sent `"400"`.
+    for (final name in ['session-cm-aggregate.json', 'session-saved-methods.json', 'session-payer-bears-fee.json']) {
+      final branding = SessionData.fromJson(fixtureBody(name)).merchantBranding;
+      expect(branding.whiteLabel, isTrue, reason: name);
+      expect(branding.overlayIntensity, 40, reason: name);
+      expect(branding.fontWeightHeading, 600, reason: name);
+      expect(branding.fontWeightBody, 400, reason: name);
+    }
     final branding = SessionData.fromJson(fixtureBody('session-cm-aggregate.json')).merchantBranding;
-    expect(branding.whiteLabel, isTrue);
-    expect(branding.overlayIntensity, 40);
-    expect(branding.fontWeightHeading, 600);
-    expect(branding.fontWeightBody, 400);
     expect(branding.borderRadius, '12px');
     expect(branding.appearanceMode, 'light');
     final plain = SessionData.fromJson(fixtureBody('session-ci-xof-wallets.json')).merchantBranding;
@@ -154,9 +167,13 @@ void main() {
     expect(ci.channels.firstWhere((c) => c.slug == 'ci.moov').logo, isNull);
     expect(ci.channels.first.minAmount, isNull);
     final sandbox = SessionData.fromJson(fixtureBody('session-sandbox-cm.json'));
-    expect(sandbox.echo, isNull, reason: 'echo.key null: no socket');
-    expect(sandbox.echoSettings?.wsHost, 'ws://localhost');
+    expect(sandbox.echo, isNull, reason: '2.1: no echo without a key');
     expect(sandbox.altcha, isNull);
+    final keyless = SessionData.fromJson(fixtureBody('session-processing-mobile-money.json'));
+    expect(keyless.echo, isNull, reason: '2.0: echo.key null, no socket');
+    expect(keyless.echoSettings?.wsHost, 'ws://localhost');
+    expect(ci.transaction.errorCode, isNull, reason: 'a 2.0 session has no error_code');
+    expect(ci.channels.first.logoPng, isNull, reason: 'a 2.0 session has no logo_png');
   });
 
   test('PR-08 accepts absent optional objects', () {
@@ -251,6 +268,8 @@ void main() {
       'process-422-unknown-channel.json': ('validation_error', i, true, null, 'channel', null, null),
       'process-422-validation.json': ('validation_error', i, true, null, null, null, null),
       'process-failed-402.json': ('insufficient_funds', p, true, 'insufficient_funds', null, null, null),
+      'process-422-security-check-failed.json': ('security_check_failed', i, true, null, 'request', null, null),
+      'client-session-422-security-check-failed.json': ('security_check_failed', i, true, null, 'request', null, null),
     };
     final failing =
         fixtureNames().where((name) => !name.startsWith('realtime-') && fixtureStatus(name) >= 400).toList();
@@ -410,9 +429,90 @@ void main() {
     });
   });
 
+  test('AL-02 recognises the altcha refusal by its code', () {
+    String sha(String text) => sha256.convert(utf8.encode(text)).toString();
+    Map<String, dynamic> withChallenge(String salt, int number) => fixtureBody('session-cm-aggregate.json')
+      ..['altcha'] = {
+        'algorithm': 'SHA-256',
+        'challenge': sha('$salt$number'),
+        'salt': salt,
+        'signature': 'sig',
+        'maxnumber': 100,
+      };
+    int? numberOf(Map<String, dynamic> body) =>
+        (((body['data'] as Map?) ?? body)['altcha'] ?? body['altcha'] as Map?)?['number'] as int?;
+
+    // Whatever the message says: the code decides.
+    final otherMessage = fixtureBody('process-422-security-check-failed.json')
+      ..['message'] = 'La vérification de sécurité a échoué.'
+      ..['errors'] = {
+        'request': ['La vérification de sécurité a échoué.'],
+      };
+    for (final refusal in [
+      FakeAnswer.fixture('process-422-security-check-failed.json'),
+      FakeAnswer(422, otherMessage),
+    ]) {
+      virtual((async) {
+        final api = FakeApi(routes: {
+          'GET /pay/session': [FakeAnswer(200, withChallenge('s1', 7)), FakeAnswer(200, withChallenge('s2', 42))],
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'POST /pay/process': [refusal, FakeAnswer.fixture('process-processing-mobile-money-live.json')],
+          'GET /pay/status': 'status-processing.json',
+        });
+        final checkout = Checkout(async, api, altchaSolver: (c) async => solveAltcha(c));
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        expect(api.calls('/pay/session'), hasLength(2), reason: 'reloaded once for a new challenge');
+        expect(api.bodies('/pay/process').map(numberOf), [7, 42]);
+        final keys = api.calls('/pay/process').map((r) => r.headers['Idempotency-Key']).toSet();
+        expect(keys, hasLength(2), reason: 'a new Idempotency-Key');
+        expect(checkout.controller.state, CheckoutState.approvalRequired);
+        expect(checkout.controller.fieldErrors, isEmpty);
+        checkout.end();
+      });
+    }
+
+    virtual((async) {
+      // A second refusal: security_check_failed, retryable, no field errors.
+      final api = FakeApi(routes: {
+        'GET /pay/session': [FakeAnswer(200, withChallenge('s1', 7)), FakeAnswer(200, withChallenge('s2', 42))],
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': 'process-422-security-check-failed.json',
+      });
+      final checkout = Checkout(async, api, altchaSolver: (c) async => solveAltcha(c));
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(api.calls('/pay/process'), hasLength(2));
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.error?.code, 'security_check_failed');
+      expect(checkout.controller.error?.retryable, isTrue);
+      expect(checkout.controller.fieldErrors, isEmpty);
+      checkout.end();
+    });
+
+    virtual((async) {
+      // The same on a client session, its solution sent as `altcha`.
+      final api = FakeApi(routes: {
+        'GET /pay/session': [FakeAnswer(200, withChallenge('s1', 7)), FakeAnswer(200, withChallenge('s2', 42))],
+        'GET /pay/sdk-config': 'sdk-config-card-paystack.json',
+        'POST /pay/client-session': [
+          FakeAnswer.fixture('client-session-422-security-check-failed.json'),
+          FakeAnswer.fixture('client-session-start-202.json'),
+        ],
+        'GET /pay/status': 'status-processing.json',
+      });
+      final checkout = Checkout(async, api, locale: 'en', altchaSolver: (c) async => solveAltcha(c));
+      checkout.controller.selectMethod(checkout.method(MethodFamily.card));
+      checkout.run(checkout.controller.payCard);
+      expect(api.bodies('/pay/client-session').map(numberOf), [7, 42]);
+      expect(checkout.controller.state, CheckoutState.pending);
+      checkout.end();
+    });
+  });
+
   test('SY-01 uses the synced spec files', () {
     final manifest = File('$fixturesDir/spec.sha256').readAsLinesSync().where((line) => line.trim().isNotEmpty);
-    expect(manifest, hasLength(94));
+    expect(manifest, hasLength(99));
     for (final line in manifest) {
       final hash = line.substring(0, 64);
       final path = line.substring(66);

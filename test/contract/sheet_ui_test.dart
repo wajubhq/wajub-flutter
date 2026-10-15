@@ -1,16 +1,22 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:url_launcher_platform_interface/link.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 import 'package:wajub_mobile/src/adapters/hosted_redirect.dart';
 import 'package:wajub_mobile/src/appearance/appearance.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
+import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
 import 'package:wajub_mobile/src/checkout/present_options.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/wajub_error.dart';
+import 'package:wajub_mobile/src/widgets/network_logo.dart';
 import 'package:wajub_mobile/src/widgets/present.dart';
 
 import '../support/fake_api.dart';
@@ -318,6 +324,50 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('CH-06 prefers logo_png where SVG cannot be drawn', (tester) async {
+    // Flutter draws SVG: `logo` first, `logo_png` when it does not load,
+    // the brand badge when neither does.
+    final png =
+        base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>';
+    Future<void> show(String session, String config, {required bool svgLoads}) async {
+      final fetched = <String>[];
+      NetworkLogo.clearCache();
+      await http.runWithClient(() async {
+        final sheet = Sheet(FakeApi(routes: {'GET /pay/session': session, 'GET /pay/sdk-config': config}));
+        await sheet.open(tester);
+        await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      },
+          () => MockClient((request) async {
+                fetched.add(request.url.toString());
+                final path = request.url.path;
+                if (path.endsWith('.png')) return http.Response.bytes(png, 200);
+                if (path.endsWith('.svg') && svgLoads) return http.Response(svg, 200);
+                return http.Response('', 404);
+              }));
+      final logo = find.byKey(const ValueKey('wajub-operator-logo-mtn'));
+      if (session == 'session-cm-aggregate.json' && !svgLoads) {
+        expect(fetched, contains('https://api.wajub.com/img/channels/momo.png'));
+        expect(find.descendant(of: logo, matching: find.byType(Image)), findsWidgets, reason: 'the PNG');
+      } else if (svgLoads) {
+        expect(fetched.where((url) => url.contains('/img/channels/') && url.endsWith('.png')), isEmpty,
+            reason: 'the SVG is kept');
+        expect(find.descendant(of: logo, matching: find.byType(SvgPicture)), findsWidgets);
+      } else {
+        expect(find.byKey(const ValueKey('wajub-operator-badge-mtn')), findsWidgets, reason: 'a 2.0 session: badge');
+      }
+      await tester.pumpWidget(const SizedBox());
+    }
+
+    await show('session-cm-aggregate.json', 'sdk-config-cm-stripe.json', svgLoads: false);
+    await show('session-cm-aggregate.json', 'sdk-config-cm-stripe.json', svgLoads: true);
+    await show('session-ci-xof-wallets.json', 'sdk-config-ci-wallets.json', svgLoads: false);
+    NetworkLogo.clearCache();
+  });
+
   testWidgets('a Mobile Money payment, from the operators to the success screen', (tester) async {
     final api = FakeApi(routes: {
       'GET /pay/session': 'session-cm-aggregate.json',
@@ -526,7 +576,7 @@ void main() {
       controller.result.then((r) => result = r);
       controller.load();
       async.flushMicrotasks();
-      controller.selectMethod(controller.methods.first);
+      controller.selectMethod(controller.methods.firstWhere((m) => m.family == MethodFamily.mobileMoney));
       controller.setPhone('670000000');
       controller.payMobileMoney();
       async.elapse(const Duration(seconds: 10));

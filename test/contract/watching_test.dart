@@ -4,7 +4,6 @@ import 'package:clock/clock.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
-import 'package:wajub_mobile/src/checkout/present_options.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/realtime/payment_watcher.dart';
 import 'package:wajub_mobile/src/realtime/pusher_socket.dart';
@@ -106,7 +105,7 @@ void main() {
           'GET /pay/status': 'status-processing.json',
           'POST /pay/broadcasting/auth': 'broadcasting-auth-200.json'
         }),
-        realtime: RealtimeEndpoint.resolve(session, const RealtimeOptions()),
+        realtime: RealtimeEndpoint.resolve(session),
         sockets: sockets,
       )..watcher.start();
       async.flushMicrotasks();
@@ -241,20 +240,14 @@ void main() {
 
   test('WT-03 subscribes to the payment channel', () {
     final reverb = SessionData.fromJson(fixtureBody('session-cm-aggregate.json'));
-    final endpoint = RealtimeEndpoint.resolve(reverb, const RealtimeOptions())!;
+    final endpoint = RealtimeEndpoint.resolve(reverb)!;
     expect(endpoint.uri.toString(),
         'wss://ws.wajub.com:443/app/wajub-app-key?protocol=7&client=wajub-flutter&version=1.6.0&flash=false');
     expect(endpoint.channel, 'private-payment.trx_PVrU8x2kQ1mNa7Lb3cDe');
 
     final pusher = SessionData.fromJson(fixtureBody('session-ci-xof-wallets.json'));
-    final hosted = RealtimeEndpoint.resolve(pusher, const RealtimeOptions())!;
+    final hosted = RealtimeEndpoint.resolve(pusher)!;
     expect((hosted.host, hosted.port, hosted.tls, hosted.key), ('ws-eu.pusher.com', 443, true, 'pusher-app-key'));
-
-    final custom = RealtimeEndpoint.resolve(
-      reverb,
-      const RealtimeOptions(host: 'reverb.shop.example', port: 8080, tls: false),
-    )!;
-    expect(custom.uri.toString(), startsWith('ws://reverb.shop.example:8080/app/wajub-app-key?'));
 
     virtual((async) {
       final api = FakeApi(routes: {
@@ -291,13 +284,15 @@ void main() {
   });
 
   test('WT-04 falls back to polling', () {
+    // 2.1: no key, no `echo` at all.
     final sandbox = SessionData.fromJson(fixtureBody('session-sandbox-cm.json'));
-    expect(sandbox.echoSettings?.key, '');
-    expect(RealtimeEndpoint.resolve(sandbox, const RealtimeOptions()), isNull, reason: 'key: null');
-    final noEcho = fixtureBody('session-cm-aggregate.json')..remove('echo');
-    expect(RealtimeEndpoint.resolve(SessionData.fromJson(noEcho), const RealtimeOptions()), isNull);
+    expect(sandbox.echoSettings, isNull);
+    expect(RealtimeEndpoint.resolve(sandbox), isNull, reason: 'echo absent');
+    // 2.0: `echo` with `key: null`.
+    final keyless = SessionData.fromJson(fixtureBody('session-processing-mobile-money.json'));
+    expect(keyless.echoSettings, isNotNull);
+    expect(RealtimeEndpoint.resolve(keyless), isNull, reason: 'key: null');
     final reverb = SessionData.fromJson(fixtureBody('session-cm-aggregate.json'));
-    expect(RealtimeEndpoint.resolve(reverb, const RealtimeOptions(enabled: false)), isNull);
 
     virtual((async) {
       // An unreachable host: the polling carries the watch every 5 s.
@@ -305,7 +300,7 @@ void main() {
       final watch = Watch(
         async,
         api,
-        realtime: RealtimeEndpoint.resolve(reverb, const RealtimeOptions()),
+        realtime: RealtimeEndpoint.resolve(reverb),
         sockets: FakeRealtime(refuse: true),
       )..watcher.start();
       async.elapse(const Duration(seconds: 30));
@@ -323,7 +318,7 @@ void main() {
       'realtime-payment-status-updated-processing.json': null,
     };
     final session = SessionData.fromJson(fixtureBody('session-cm-aggregate.json'));
-    final endpoint = RealtimeEndpoint.resolve(session, const RealtimeOptions())!;
+    final endpoint = RealtimeEndpoint.resolve(session)!;
     expected.forEach((name, verdict) {
       for (final rawData in [false, true]) {
         virtual((async) {

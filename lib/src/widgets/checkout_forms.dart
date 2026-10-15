@@ -479,19 +479,20 @@ class _WalletForm extends StatelessWidget {
     final theme = WajubTheme.of(context);
     final channel = controller.method!.channel;
     final name = channel.localizedName(controller.language);
-    final logo = channel.logo;
+    final logo = NetworkLogo.of(
+      logo: channel.logo,
+      logoPng: channel.logoPng,
+      width: 40,
+      height: 40,
+      fallback: Icon(Icons.account_balance_wallet_outlined, color: theme.colors.textSecondary),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
             if (logo != null) ...[
-              NetworkLogo(
-                url: logo,
-                width: 40,
-                height: 40,
-                fallback: Icon(Icons.account_balance_wallet_outlined, color: theme.colors.textSecondary),
-              ),
+              logo,
               SizedBox(width: theme.spacingUnit * 3),
             ],
             Expanded(

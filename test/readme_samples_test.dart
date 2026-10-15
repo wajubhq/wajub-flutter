@@ -50,7 +50,6 @@ PresentOptions options(String authorizationToken) {
       countryLocked: true, // hide the country selector
       operatorMode: OperatorMode.detect, // the operator comes from the number
     ),
-    realtime: const RealtimeOptions(host: 'ws.shop.example', port: 443, tls: true), // or enabled: false
     cancelOnDismiss: true, // a dismiss before any payment cancels it on Wajub
     autoCloseSuccess: const Duration(seconds: 3), // Duration.zero keeps the success screen
     stripe: const StripeOptions(appPublishableKey: 'pk_live_…'), // your app's own Stripe key, if it has one

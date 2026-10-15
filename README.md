@@ -144,7 +144,6 @@ PresentOptions(
     countryLocked: true,                      // hide the country selector
     operatorMode: OperatorMode.detect,        // the operator comes from the number
   ),
-  realtime: const RealtimeOptions(host: 'ws.shop.example', port: 443, tls: true), // or enabled: false
   cancelOnDismiss: true,                      // a dismiss before any payment cancels it on Wajub
   autoCloseSuccess: const Duration(seconds: 3), // Duration.zero keeps the success screen
   stripe: const StripeOptions(appPublishableKey: 'pk_live_…'), // your app's own Stripe key, if it has one
@@ -157,9 +156,6 @@ PresentOptions(
 - **`returnUrl`** is sent to the provider pages that open in the browser (`return_url`). Without it the provider
   returns the payer to the merchant's page and the payer comes back to the app by hand; either way the sheet reads
   the status as soon as the app is in the foreground again.
-- **`realtime`** overrides the session's socket settings: another host, port or TLS for a self-hosted Reverb or
-  Soketi, or `enabled: false` for polling only. By default the sheet connects where the session says (`echo`), with
-  no Pusher cluster setting.
 - **`cancelOnDismiss: false`** leaves the payment open when the payer closes the sheet before paying, so you can
   present it again.
 - **`stripe`**: the sheet's Stripe card form sets `flutter_stripe`'s global `Stripe.publishableKey` to the

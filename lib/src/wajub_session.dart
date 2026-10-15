@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'adapters/hosted_redirect.dart';
 import 'adapters/stripe_adapter.dart';
-import 'checkout/present_options.dart';
 import 'client/pay_client.dart';
 import 'mapper/payment_mapper.dart';
 import 'models/models.dart';
@@ -11,8 +10,9 @@ import 'models/wajub_error.dart';
 import 'realtime/payment_watcher.dart';
 import 'realtime/pusher_socket.dart';
 
-/// Session-scoped checkout client — the hosted checkout's `/pay/*` calls,
-/// for apps that draw their own UI. `presentWajubCheckout` drives all of it.
+/// One payment, for apps that draw their own payment screens: what it
+/// offers, paying it, and following it to its outcome. The payment sheet
+/// (`presentWajubCheckout`) does all of this by itself.
 class WajubSession {
   WajubSession(this._token, {PayClient? client}) : _client = client ?? PayClient();
 
@@ -30,6 +30,7 @@ class WajubSession {
   /// The HTTP client, for the payment sheet.
   PayClient get client => _client;
 
+  /// The payment and the methods it offers, read once unless [forceRefresh].
   Future<SessionData> loadSession({bool forceRefresh = false}) async {
     if (!forceRefresh && _cachedSession != null) {
       return _cachedSession!;
@@ -39,14 +40,16 @@ class WajubSession {
     return session;
   }
 
+  /// How each payment method collects what it needs, by channel slug.
   Future<SdkConfig> getSdkConfig() => _client.getSdkConfig(_token);
 
-  /// `GET /pay/status`: the payment's current status. After a crash, read it
-  /// (or ask your server) to learn how a payment ended.
+  /// The payment's current status. After a crash, read it (or ask your
+  /// server) to learn how a payment ended.
   Future<PaymentStatusUpdate> status() => _client.getStatus(_token);
 
-  /// [MobileMoneyInput.phone] in E.164 (`+237677123456`); `operator` only for
-  /// an aggregate channel. [idempotencyKey]: one per press of Pay.
+  /// Pays with Mobile Money. [MobileMoneyInput.phone] in E.164
+  /// (`+237677123456`); `operator` only for a channel that groups several
+  /// operators. [idempotencyKey]: one per press of Pay.
   Future<PaymentResult> payMobileMoney(MobileMoneyInput input, {String? returnUrl, String? idempotencyKey}) async {
     await loadSession();
     final body = {
@@ -57,7 +60,7 @@ class WajubSession {
     return PaymentMapper.mapProcessResponse(raw, 'mobile_money');
   }
 
-  /// Stripe `stripe_elements` — tokenizes via native Stripe SDK, then processes.
+  /// Pays with a card Stripe tokenized (`StripeAdapter.createPaymentMethod`).
   Future<PaymentResult> payCard({
     required String channelSlug,
     required String paymentMethodId,
@@ -73,7 +76,8 @@ class WajubSession {
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
 
-  /// Initializes Stripe from sdk-config and creates a PaymentMethod in one call.
+  /// Pays with the card in Stripe's card field, [publishableKey] being the
+  /// card's `SdkChannelConfig.publishableKey`.
   Future<PaymentResult> payCardWithStripeElements({
     required String channelSlug,
     required String publishableKey,
@@ -90,38 +94,30 @@ class WajubSession {
     );
   }
 
-  /// One-tap wallet channel (sdk-config `form`, no `requiredFields`, channel
-  /// type `wallet` — e.g. Djamo): returns [PaymentRequiresAction] redirecting
-  /// to the wallet's payment page, which opens the wallet app.
+  /// Pays with a one-tap wallet: returns [PaymentRequiresAction] with the
+  /// wallet's page, which opens the wallet app.
   Future<PaymentResult> payWallet({required String channelSlug, String? returnUrl}) async {
     await loadSession();
     return process(channelSlug, {if (returnUrl != null) 'return_url': returnUrl});
   }
 
-  /// `POST /pay/process` with [data] as given (plus the device signals),
-  /// read as 1.5 did: a confirmation step is `unsupported_action`.
+  /// Pays with [channel] and [data] as given. A confirmation step comes back
+  /// as `unsupported_action`; [processPayment] reads it.
   Future<PaymentResult> process(String channel, Map<String, dynamic> data, {String? idempotencyKey}) async {
     final raw = await _client.process(_token, channel, data, idempotencyKey: idempotencyKey);
     return PaymentMapper.mapProcessResponse(raw, _methodType(channel));
   }
 
-  /// `POST /pay/process`, read as the spec v2 reads it: a confirmation step
-  /// (`confirm_otp`…) is [PaymentRequiresAction] with [ActionKind.confirm], a
-  /// [PaymentRequiresAction.step] and its `stepId` (answer it with
+  /// Pays with [channel] and [data], and returns where the payment stands: a
+  /// confirmation step is [PaymentRequiresAction] with [ActionKind.confirm],
+  /// a [PaymentRequiresAction.step] and its `stepId` (answer it with
   /// [verifyStep]); the sandbox 3-D Secure code is [ActionKind.confirm3ds]
-  /// with a `stepId`; an action missing what it needs is `unsupported_action`.
+  /// with a `stepId`; a refusal is [PaymentFailed]; a payment whose outcome
+  /// is not known yet is [PaymentProcessing] — follow it with [status] or
+  /// [watchStatus]. Only a payment that cannot be loaded throws.
   ///
-  /// Every answer is an outcome (the spec's `ProcessOutcome`), never a
-  /// throw: a refusal is [PaymentFailed] with its [WajubError]; a payment
-  /// without an answer (network error, timeout, `5xx` after the retries) or
-  /// already running (`409 payment_in_progress`) is [PaymentProcessing] with
-  /// [ProcessingKind.pending] and the session's transaction — the charge may
-  /// be running: follow [status] or [watchStatus], and if the status still
-  /// reads a plain `pending` 60 s later, call again with the same
-  /// [idempotencyKey] (a request that did arrive is replayed, not charged
-  /// twice). Only a session that cannot load throws.
-  ///
-  /// Give one [idempotencyKey] per press of Pay.
+  /// Give one [idempotencyKey] per press of Pay, and the same one again to
+  /// retry a payment whose outcome is not known: it is never charged twice.
   Future<PaymentResult> processPayment(String channel, Map<String, dynamic> data, {String? idempotencyKey}) async {
     final session = await loadSession();
     final RawProcessResponse raw;
@@ -138,10 +134,9 @@ class WajubSession {
     return PaymentMapper.mapProcessAnswer(raw, _methodType(channel), fallback: session.transaction);
   }
 
-  /// sdk-config `hosted_redirect` (PayPal, Mollie, Paddle, Kkiapay, FedaPay,
-  /// PayDunya, CinetPay): the PSP's own page collects the card — submit no
-  /// card data, then open the redirect. [billing] must carry every field the
-  /// channel's `requiredFields` lists (see [PaymentMapper.hostedCardFields]).
+  /// Pays a card on the provider's own page: returns the page to open.
+  /// [billing] carries the contact fields the card asks for
+  /// (`SdkChannelConfig.requiredFields`).
   Future<PaymentResult> payCardHostedRedirect({
     required String channelSlug,
     Map<String, String> billing = const {},
@@ -156,13 +151,12 @@ class WajubSession {
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
 
-  /// `POST /pay/client-session` — PSP-hosted checkout (sdk-config
-  /// `clientSession == true`, e.g. Paystack / Flutterwave cards). Returns
-  /// [PaymentRequiresAction] with [ActionKind.clientSession] and a
-  /// [ClientSession]; open its `hostedUrl` (see [handleRedirectAction]) or
-  /// launch the PSP's native SDK, then call [completeClientSession].
-  /// Idempotent: calling again returns the same open session. [billing]:
-  /// the other contact fields sdk-config lists in `required_fields`.
+  /// Pays a card on the provider's own checkout
+  /// (`SdkChannelConfig.clientSession`). Returns [PaymentRequiresAction]
+  /// with [ActionKind.clientSession] and a [ClientSession]: open its page
+  /// ([handleRedirectAction]), then call [completeClientSession]. Calling
+  /// again returns the same checkout. [billing]: the other contact fields
+  /// the card asks for (`SdkChannelConfig.requiredFields`).
   Future<PaymentResult> startClientSession({
     required String channelSlug,
     String? email,
@@ -184,34 +178,34 @@ class WajubSession {
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
 
-  /// `POST /pay/client-session/complete` — call when the payer returns from
-  /// the PSP's UI. [PaymentComplete] when verified, [PaymentProcessing] while
-  /// the PSP hasn't confirmed yet (keep [watchStatus] running — the PSP
-  /// webhook settles it). A definitive failure throws [WajubError].
+  /// Call when the payer comes back from the provider's checkout:
+  /// [PaymentComplete] when paid, [PaymentProcessing] while the provider has
+  /// not confirmed yet (keep [watchStatus] running). A definitive failure
+  /// throws [WajubError].
   Future<PaymentResult> completeClientSession(String clientSessionId) async {
     final raw = await _client.completeClientSession(_token, clientSessionId);
     return PaymentMapper.mapProcessResponse(raw, 'card');
   }
 
-  /// `POST /pay/{otp,pin,phone,birthday,address}/verify` for the step of a
-  /// [PaymentRequiresAction] ([PaymentRequiresAction.step],
-  /// [PaymentRequiresAction.stepId]). [fields]: `{code}`, `{pin}`, `{phone}`,
-  /// `{birthday: 'YYYY-MM-DD'}`, or `{address, city, state, zip_code}`.
+  /// Answers the confirmation step of a [PaymentRequiresAction]
+  /// ([PaymentRequiresAction.step], [PaymentRequiresAction.stepId]).
+  /// [fields]: `{code}`, `{pin}`, `{phone}`, `{birthday: 'YYYY-MM-DD'}`, or
+  /// `{address, city, state, zip_code}`. When another step follows, it is in
+  /// [StepVerifyResult.next].
   Future<StepVerifyResult> verifyStep(PaymentStepKind kind, String stepId, Map<String, String> fields) =>
       _client.verifyStep(_token, kind, stepId, fields);
 
-  /// Asks for the step again; the providers have no resend, so this does
-  /// nothing visible today.
+  /// Asks for the step again.
   Future<void> resendStep(PaymentStepKind kind, String stepId) => _client.resendStep(_token, kind, stepId);
 
-  /// Sandbox 3-D Secure email code. Throws [WajubError] `invalid_code` on a
-  /// wrong code (the API answers it with a 500 today).
+  /// Answers the sandbox 3-D Secure email code. A wrong code throws a
+  /// retryable [WajubError].
   Future<void> verifyThreeDs(String threeDsId, String code) => _client.verifyThreeDs(_token, threeDsId, code);
 
   /// Sandbox 3-D Secure: sends a new code; returns the masked email.
   Future<String?> sendThreeDs(String threeDsId) => _client.sendThreeDs(_token, threeDsId);
 
-  /// Opens redirect / hosted PSP URLs in the system browser (not WebView).
+  /// Opens the page a [PaymentRequiresAction] asks for in the system browser.
   Future<bool> handleRedirectAction(PaymentResult result) async {
     if (result is! PaymentRequiresAction) return false;
     if (result.action != ActionKind.redirect &&
@@ -230,18 +224,14 @@ class WajubSession {
     return result.redirectUrl;
   }
 
-  /// Follows the payment until it ends: polls `GET /pay/status` and, when
-  /// the session has realtime settings, listens to the payment's channel.
-  /// Delivers a [PaymentProcessing] each time the status changes, then the
-  /// outcome: [PaymentComplete], or [PaymentFailed] whose code is the status
-  /// (`failed`, `cancelled`, `expired`) as in 1.5, or the refusal's code when
-  /// an attempt went back to `pending` without charging. A session that is no
-  /// longer readable (`401`, `403`, `404`, `410`) ends the stream with its
-  /// [WajubError]. It watches until then; cancelling the subscription stops
-  /// it. [interval] is the base polling interval.
+  /// Follows the payment until it ends: a [PaymentProcessing] each time its
+  /// status changes, then the outcome — [PaymentComplete], or [PaymentFailed]
+  /// whose code is the status (`failed`, `cancelled`, `expired`) or the
+  /// refusal's code when an attempt was refused. A payment that can no longer
+  /// be read ends the stream with its [WajubError]. Cancelling the
+  /// subscription stops it. [interval]: how often to check at most.
   Stream<PaymentResult> watchStatus({
     Duration interval = PaymentWatcher.defaultInterval,
-    RealtimeOptions realtime = const RealtimeOptions(),
   }) {
     PaymentWatcher? watcher;
     var cancelled = false;
@@ -264,7 +254,7 @@ class WajubSession {
         token: _token,
         language: language,
         interval: interval,
-        realtime: RealtimeEndpoint.resolve(session, realtime),
+        realtime: RealtimeEndpoint.resolve(session),
         capped: false,
         seenProcessing: transaction.status == 'processing' || transaction.status == 'partial',
         onStatus: (update) {

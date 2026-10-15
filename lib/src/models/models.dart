@@ -1,7 +1,8 @@
 import 'json_read.dart';
+import 'payment_result.dart';
 
-/// `transaction.processing_context`: present while the payment is
-/// `processing` or `partial`, to restore what the payer was doing.
+/// What the payer is doing while a payment is under way: approving it on the
+/// phone, dialling a code, or on a provider's page.
 class ProcessingContext {
   const ProcessingContext({
     this.channelSlug,
@@ -21,13 +22,14 @@ class ProcessingContext {
   final bool isUssd;
   final bool isBankTransfer;
 
-  /// English. May hold a USSD fallback ("dial *126#").
+  /// The provider's instruction for the payer, in English. May hold a code to
+  /// dial ("dial *126#").
   final String? payerInstruction;
 
   /// The provider's page to reopen ("Continue payment").
   final String? actionUrl;
 
-  /// Sandbox 3-D Secure email code.
+  /// The sandbox 3-D Secure email code.
   final String? threeDsId;
   final String? threeDsMethod;
   final String? maskedEmail;
@@ -49,7 +51,7 @@ class ProcessingContext {
       );
 }
 
-/// `transaction.fee` when the payer bears it.
+/// The fee, when the payer bears it.
 class TransactionFee {
   const TransactionFee({required this.amount, this.rate, this.description});
 
@@ -68,7 +70,7 @@ class TransactionFee {
   }
 }
 
-/// `transaction.customer`.
+/// The customer the payment was created for.
 class TransactionCustomer {
   const TransactionCustomer({this.name, this.email});
 
@@ -106,11 +108,10 @@ class SessionTransaction {
     this.errorCode,
   });
 
-  /// Wajub's payment id (`trx_…`): the realtime channel's suffix.
+  /// Wajub's payment id (`trx_…`), what `GET /payments/{id}` takes.
   final String id;
 
-  /// The merchant's reference. `GET /pay/status` calls the payment id
-  /// `reference`: never compare the two.
+  /// Your reference for the payment.
   final String reference;
   final String? trxref;
 
@@ -121,9 +122,8 @@ class SessionTransaction {
   final double? amountTotal;
   final String currency;
 
-  /// `pending`, `processing`, `succeeded`… `unknown` when the answer named
-  /// none (1.5 read it as `pending`): never taken for a payment that may be
-  /// cancelled or paid again.
+  /// `pending`, `processing`, `succeeded`, `failed`, `cancelled`, `expired`…;
+  /// `unknown` when Wajub did not say.
   final String status;
   final String? statusLabel;
   final bool sandbox;
@@ -142,8 +142,7 @@ class SessionTransaction {
   final String? updatedAt;
   final String? terminalAt;
 
-  /// The refusal code a declined attempt left on the payment, when the
-  /// answer carries it: it stays until the next attempt starts.
+  /// Why the last attempt was refused, while the payment can be paid again.
   final String? errorCode;
 
   /// The amount to show and to report: [amountTotal], else [amount].
@@ -172,8 +171,7 @@ class SessionTransaction {
         errorCode: errorCode,
       );
 
-  /// Throws a [FormatException] when `amount` is not a number: every other
-  /// key falls back.
+  /// Throws a [FormatException] when the amount is not a number.
   factory SessionTransaction.fromJson(Map<String, dynamic> json) => SessionTransaction(
         id: readString(json['id']) ?? readString(json['reference']) ?? '',
         reference: readString(json['reference']) ?? readString(json['id']) ?? '',
@@ -200,11 +198,11 @@ class SessionTransaction {
       );
 }
 
-/// One member of an aggregate channel (`cm.mobile`): a real operator channel.
+/// One operator of a Mobile Money channel that groups several (`cm.mobile`).
 class ChannelOperator {
-  const ChannelOperator({required this.slug, required this.operator, required this.name, this.logo});
+  const ChannelOperator({required this.slug, required this.operator, required this.name, this.logo, this.logoPng});
 
-  /// The operator's own channel, e.g. `cm.orange`.
+  /// The operator's channel, e.g. `cm.orange`.
   final String slug;
 
   /// `mtn`, `orange`.
@@ -214,6 +212,9 @@ class ChannelOperator {
   final String name;
   final String? logo;
 
+  /// The same logo as a PNG, when there is one.
+  final String? logoPng;
+
   factory ChannelOperator.fromJson(Map<String, dynamic> json) {
     final slug = readString(json['slug']) ?? '';
     return ChannelOperator(
@@ -221,6 +222,7 @@ class ChannelOperator {
       operator: readString(json['operator']) ?? (slug.contains('.') ? slug.substring(slug.indexOf('.') + 1) : slug),
       name: readString(json['name']) ?? slug,
       logo: readText(json['logo']),
+      logoPng: readText(json['logo_png']),
     );
   }
 }
@@ -233,6 +235,7 @@ class SessionChannel {
     this.nameFr,
     required this.type,
     this.logo,
+    this.logoPng,
     this.countries = const [],
     this.minAmount,
     this.maxAmount,
@@ -246,10 +249,15 @@ class SessionChannel {
   /// In the session's locale.
   final String name;
 
-  /// Always French (the API's literal key `name.fr`).
+  /// The French name.
   final String? nameFr;
   final String type;
+
+  /// The logo, mostly an SVG.
   final String? logo;
+
+  /// The same logo as a PNG, when there is one.
+  final String? logoPng;
 
   /// ISO-2, upper case. Empty for card.
   final List<String> countries;
@@ -257,13 +265,14 @@ class SessionChannel {
   final double? maxAmount;
   final String currency;
 
-  /// The members of an aggregate (`cm.mobile`); empty for any other channel.
+  /// The operators of a channel that groups several (`cm.mobile`); empty for
+  /// any other channel.
   final List<ChannelOperator> operators;
 
-  /// An aggregate folds several operators of one country (`cm.mobile`).
+  /// Whether the channel groups several operators of one country.
   bool get isAggregate => operators.isNotEmpty;
 
-  /// `name.fr` in French, `name` otherwise.
+  /// The French name in French, [name] otherwise.
   String localizedName(String language) => language == 'fr' ? (nameFr ?? name) : name;
 
   factory SessionChannel.fromJson(Map<String, dynamic> json) => SessionChannel(
@@ -274,6 +283,7 @@ class SessionChannel {
         nameFr: readString(json['name.fr']) ?? readString(json['name_fr']),
         type: readString(json['type']) ?? 'mobile_money',
         logo: readText(json['logo']),
+        logoPng: readText(json['logo_png']),
         countries: readStringList(json['countries']).map((c) => c.toUpperCase()).toList(),
         minAmount: readDouble(json['min_amount']),
         maxAmount: readDouble(json['max_amount']),
@@ -282,6 +292,7 @@ class SessionChannel {
       );
 }
 
+/// Used by the SDK to follow the payment.
 class EchoConfig {
   const EchoConfig({
     required this.key,
@@ -292,8 +303,6 @@ class EchoConfig {
   });
 
   final String key;
-
-  /// With its scheme: `wss://ws.wajub.com`, `ws://localhost`.
   final String wsHost;
   final int wsPort;
   final String channelPrefix;
@@ -308,8 +317,7 @@ class EchoConfig {
       );
 }
 
-/// The merchant's look, from `GET /pay/session` `branding`. It comes from
-/// one of three sources with slightly different keys: every one is optional.
+/// The merchant's look, set in the Dashboard. Every value is optional.
 class Branding {
   const Branding({
     this.primaryColor,
@@ -357,8 +365,7 @@ class Branding {
   /// `comfortable` or `compact`.
   final String? density;
 
-  /// Hides "Secured by Wajub". The API sends a boolean, the web also takes
-  /// `{enabled: …}`: both read here.
+  /// White label: hides "Secured by Wajub".
   final bool whiteLabel;
   final String? inputBackgroundColor;
   final String? inputBorderColor;
@@ -376,11 +383,12 @@ class Branding {
   final int? fontWeightBody;
   final String? separatorColor;
 
-  /// The literal keys `card.background_color` and `card.border_color`.
+  /// The card's background and border colours.
   final String? cardBackgroundColor;
   final String? cardBorderColor;
 
-  /// The header logo: `logo_url`, else `logo_square_url`, else `icon_url`.
+  /// The logo the sheet's header shows: [logoUrl], else [logoSquareUrl],
+  /// else [iconUrl].
   String? get logo => logoUrl ?? logoSquareUrl ?? iconUrl;
 
   factory Branding.fromJson(Map<String, dynamic> json) {
@@ -422,7 +430,8 @@ class Branding {
       };
 }
 
-/// The Altcha proof-of-work challenge the API may ask for before a payment.
+/// A security check the payment may carry; the SDK completes it, nothing to
+/// do with it.
 class AltchaChallenge {
   const AltchaChallenge({
     required this.algorithm,
@@ -480,8 +489,7 @@ class SessionData {
   /// them with their types.
   final Map<String, String?> branding;
 
-  /// The realtime settings, when they name an app key. [echoSettings] keeps
-  /// them even without one.
+  /// Used by the SDK to follow the payment.
   final EchoConfig? echo;
   final String? callback;
 
@@ -489,17 +497,17 @@ class SessionData {
   final String? sessionLocale;
   final Branding merchantBranding;
 
-  /// Non-null when the API asks for a proof of work before a payment.
+  /// A security check the SDK completes before a payment.
   final AltchaChallenge? altcha;
 
-  /// ISO-2 of the payer's IP, when the API could tell.
+  /// The payer's country (ISO-2), when Wajub can tell.
   final String? geoCountry;
 
-  /// The merchant callbacks with `status=succeeded` / `status=cancelled`.
+  /// The merchant's pages for a paid and a cancelled payment.
   final String? returnUrl;
   final String? cancelUrl;
 
-  /// `echo` as sent, `key` included even when null.
+  /// Used by the SDK to follow the payment.
   final EchoConfig? echoSettings;
 
   factory SessionData.fromJson(Map<String, dynamic> json) {
@@ -526,11 +534,8 @@ class SessionData {
   }
 }
 
-/// Known `sdk-config` flavors (`SdkChannelConfig.sdk`). `adyen_custom_card`
-/// and `psp_inline` need a web component: on mobile those cards go through a
-/// client session when sdk-config allows one, and are hidden otherwise.
-/// `paystack_inline`/`flutterwave_inline` are legacy values api.wajub no
-/// longer sends.
+/// The values of [SdkChannelConfig.sdk]: how a payment method collects what
+/// it needs. String constants, not an enum.
 abstract final class SdkFlavor {
   static const form = 'form';
   static const stripeElements = 'stripe_elements';
@@ -553,15 +558,15 @@ class SdkChannelConfig {
 
   final bool available;
 
-  /// PREDICTION of the provider — the router re-runs per call. The pinned,
-  /// authoritative provider is [ClientSession.provider].
+  /// The provider expected to take the payment; the one that does is
+  /// [ClientSession.provider].
   final String? provider;
   final String? sdk;
   final String? publishableKey;
   final List<String> requiredFields;
 
-  /// `true` → `WajubSession.startClientSession` can hand this channel to the
-  /// PSP's own hosted checkout (PIN/OTP/AVS handled by the PSP).
+  /// Whether the card is paid on the provider's own checkout
+  /// (`WajubSession.startClientSession`).
   final bool clientSession;
 
   factory SdkChannelConfig.fromJson(Map<String, dynamic> json) => SdkChannelConfig(
@@ -574,14 +579,10 @@ class SdkChannelConfig {
       );
 }
 
-/// PSP-hosted checkout session (`client_session` of `POST /pay/client-session`).
+/// A card payment on the provider's own checkout.
 ///
-/// Default flow: open [hostedUrl] in the system browser, then call
+/// Open [hostedUrl] in the system browser, then call
 /// `WajubSession.completeClientSession` with [id] when the payer returns.
-/// Apps may instead launch the PSP's native SDK themselves — Paystack
-/// Android/Flutter ([publicKey] + [accessCode]), Flutterwave Android
-/// ([publicKey] + [encryptionKey] + [reference] as tx_ref, [amount],
-/// [currency]) — then complete the same way.
 class ClientSession {
   const ClientSession({
     required this.id,
@@ -597,14 +598,14 @@ class ClientSession {
     this.customerName,
   });
 
-  /// Pass back to `POST /pay/client-session/complete` as `client_session_id`.
+  /// What `WajubSession.completeClientSession` takes.
   final String id;
   final String provider;
 
-  /// PSP-side reference (Paystack `reference`, Flutterwave `tx_ref`).
+  /// The provider's reference.
   final String? reference;
 
-  /// In the PSP's own units (Paystack: subunit; Flutterwave: major).
+  /// In the provider's own units.
   final num? amount;
   final String? currency;
   final String? hostedUrl;
@@ -629,7 +630,7 @@ class ClientSession {
       );
 }
 
-/// Optional body fields of `POST /pay/client-session` (besides `channel`).
+/// What `WajubSession.startClientSession` may take besides the channel.
 class ClientSessionOptions {
   const ClientSessionOptions({
     this.email,
@@ -639,18 +640,18 @@ class ClientSessionOptions {
     this.billing = const {},
   });
 
-  /// Required by Paystack/Flutterwave when the transaction has no customer email.
+  /// Required when the payment has no customer email.
   final String? email;
   final String? name;
 
-  /// http(s) URL the PSP's hosted page redirects to after payment.
+  /// Where the provider's page sends the payer back after paying.
   final String? returnUrl;
 
-  /// Replace a session that died on the PSP side (the old one is re-verified first).
+  /// Start again when the provider's checkout has expired.
   final bool restart;
 
-  /// Other contact or billing fields sdk-config lists in `required_fields`
-  /// (`first_name`, `phone`, `country`…), sent flat.
+  /// The other contact or billing fields the card payment asks for
+  /// ([SdkChannelConfig.requiredFields]).
   final Map<String, String> billing;
 
   Map<String, dynamic> toJson() => {
@@ -666,7 +667,7 @@ class ClientSessionOptions {
 class SdkConfig {
   const SdkConfig({required this.channels});
 
-  /// Keyed by RAW slug (`cm.mtn`, `cm.orange` — never `cm.mobile`).
+  /// By channel slug.
   final Map<String, SdkChannelConfig> channels;
 
   factory SdkConfig.fromJson(Map<String, dynamic> json) {
@@ -694,8 +695,8 @@ class MobileMoneyInput {
   final String phone;
   final String country;
 
-  /// Only for an aggregate channel (`cm.mobile`): the operator the payer
-  /// named (`mtn`). See `MobileMoneyRules.operatorHint`.
+  /// For a channel that groups several operators (`cm.mobile`): the
+  /// operator the payer picked (`mtn`).
   final String? operator;
 }
 
@@ -705,26 +706,22 @@ class CancelResult {
   final String? redirectUrl;
 }
 
-/// One answer of `GET /pay/status`, or one realtime `PaymentStatusUpdated`
-/// event: both carry the same fields.
+/// The payment's status, as `WajubSession.status()` reads it.
 class PaymentStatusUpdate {
   const PaymentStatusUpdate({required this.status, this.reference, this.errorCode, this.payerMessage});
 
-  /// `pending`, `processing`, `succeeded`… Null when the answer named none:
-  /// no information, never read as a refusal.
+  /// `pending`, `processing`, `succeeded`…; null when Wajub did not say.
   final String? status;
 
-  /// Wajub's payment id (`trx_…`) — not the merchant's reference.
+  /// Wajub's payment id (`trx_…`), not your reference.
   final String? reference;
 
   /// Why the last attempt was refused, while the payment is back at `pending`.
   final String? errorCode;
 
-  /// English.
+  /// A message for the payer, in English.
   final String? payerMessage;
 
-  /// `GET /pay/status` nests the fields under `transaction`; a realtime
-  /// event carries them at its root.
   factory PaymentStatusUpdate.fromJson(Map<String, dynamic> json) {
     final fields = readMap(json['transaction']) ?? json;
     return PaymentStatusUpdate(
@@ -736,8 +733,7 @@ class PaymentStatusUpdate {
   }
 }
 
-/// The answer of `POST /pay/{otp,pin,phone,birthday,address}/verify`. Both
-/// outcomes arrive as HTTP 200.
+/// The answer to a confirmation step (`WajubSession.verifyStep`).
 class StepVerifyResult {
   const StepVerifyResult({
     required this.success,
@@ -745,18 +741,30 @@ class StepVerifyResult {
     this.attemptsRemaining,
     this.errorCode,
     this.errorMessage,
+    this.action,
+    this.next,
   });
 
   final bool success;
 
-  /// On success: its `status` decides (it may still be `processing`).
+  /// On success without [next]: its `status` decides (`succeeded` is paid;
+  /// it may still be `processing`).
   final SessionTransaction? transaction;
+
+  /// On success, when the provider asks for another step: its action
+  /// (`confirm_otp`, `redirect`…).
+  final String? action;
+
+  /// That next step: [PaymentRequiresAction] with its `step` and `stepId`
+  /// (or the page to open), or [PaymentFailed] with `unsupported_action`
+  /// when the SDK cannot perform it.
+  final PaymentResult? next;
   final int? attemptsRemaining;
 
   /// `invalid_otp`, `otp_expired`, `max_attempts_exceeded`, …
   final String? errorCode;
 
-  /// The API's own (English) message.
+  /// Wajub's own message, in English.
   final String? errorMessage;
 
   factory StepVerifyResult.fromJson(Map<String, dynamic> json) {
@@ -768,6 +776,18 @@ class StepVerifyResult {
       attemptsRemaining: readInt(json['attempts_remaining']),
       errorCode: readText(error?['code']),
       errorMessage: readText(error?['message']),
+      action: readText(json['action']),
     );
   }
+
+  /// This answer with the [next] step it asks for.
+  StepVerifyResult withNext(PaymentResult next) => StepVerifyResult(
+        success: success,
+        transaction: transaction,
+        attemptsRemaining: attemptsRemaining,
+        errorCode: errorCode,
+        errorMessage: errorMessage,
+        action: action,
+        next: next,
+      );
 }

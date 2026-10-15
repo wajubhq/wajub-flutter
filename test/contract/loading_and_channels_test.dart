@@ -186,6 +186,52 @@ void main() {
     }
   });
 
+  test('LD-10 reads the refusal left at load', () {
+    virtual((async) {
+      // The form opens, without a failure; the same refusal read later is
+      // the old one, not this sheet's: the watch goes on to the 60 s rule.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-pending-after-refusal.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': const FakeAnswer.network(),
+        'GET /pay/status': 'status-pending-attempt-refused.json',
+      });
+      final checkout = Checkout(async, api);
+      expect(checkout.controller.sessionData!.transaction.errorCode, isNotNull);
+      expect(checkout.controller.screen, isNot(CheckoutScreen.failed));
+      expect(checkout.recorder.errors, isEmpty);
+      expect(checkout.recorder.loadError, isNull);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.elapse(const Duration(seconds: 30));
+      expect(checkout.controller.state, CheckoutState.pending, reason: 'the code the session carried is not news');
+      checkout.elapse(const Duration(seconds: 40));
+      expect(checkout.controller.state, CheckoutState.collectingDetails, reason: 'the 60 s rule');
+      expect(checkout.controller.banner, isNotNull);
+      checkout.end();
+    });
+    virtual((async) {
+      // A different code is this attempt's refusal, at once.
+      final session = fixtureBody('session-pending-after-refusal.json');
+      (session['transaction'] as Map)['error_code'] = 'payment_declined';
+      final api = FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': const FakeAnswer.network(),
+        'GET /pay/status': 'status-pending-attempt-refused.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.elapse(const Duration(seconds: 15));
+      expect(checkout.controller.state, CheckoutState.failed);
+      checkout.end();
+    });
+    // A missing error_code (a 2.0 session) reads as null.
+    expect(SessionData.fromJson(fixtureBody('session-ci-xof-wallets.json')).transaction.errorCode, isNull);
+    expect(SessionData.fromJson(fixtureBody('session-cm-aggregate.json')).transaction.errorCode, isNull);
+  });
+
   test('LD-08 raises ready_timeout', () {
     virtual((async) {
       final api = loading(FakeAnswer.fixture('session-cm-aggregate.json', delay: const Duration(seconds: 20)));
@@ -246,7 +292,7 @@ void main() {
       expect(ci.controller.state, CheckoutState.initiated);
 
       final sandbox = Checkout(async, loading('session-sandbox-cm.json', config: 'sdk-config-sandbox.json'));
-      expect(slugsOf(sandbox.controller.methods), ['mobile_money:cm.eu,cm.mobile', 'card:card']);
+      expect(slugsOf(sandbox.controller.methods), ['card:card', 'mobile_money:cm.eu,cm.mobile'], reason: 'API order');
 
       final body = fixtureBody('session-ci-xof-wallets.json');
       for (final channel in body['channels'] as List) {
@@ -268,30 +314,50 @@ void main() {
 
   test('CH-03 resolves sdk-config for aggregates', () {
     final session = SessionData.fromJson(fixtureBody('session-cm-aggregate.json'));
+    // 2.1: the aggregate's own entry, beside its members'.
     final config = SdkConfig.fromJson(fixtureBody('sdk-config-cm-stripe.json'));
-    expect(config.channels.containsKey('cm.mobile'), isFalse);
+    expect(config.channels.keys, containsAll(['cm.mobile', 'cm.mtn', 'cm.orange', 'card']));
     final methods = buildMethods(session, config);
     expect(slugsOf(methods), ['card:card', 'mobile_money:cm.mobile']);
     expect(methods.first.cardFlavour, CardFlavour.stripe);
+    Map<String, dynamic> channelsOf(Map<String, dynamic> body) => body['channels'] as Map<String, dynamic>;
 
-    // Both members unavailable: the aggregate is not offered.
-    final body = fixtureBody('sdk-config-cm-stripe.json');
-    for (final slug in ['cm.mtn', 'cm.orange']) {
-      ((body['channels'] as Map)[slug] as Map)['available'] = false;
-    }
-    expect(slugsOf(buildMethods(session, SdkConfig.fromJson(body))), ['card:card']);
+    // The aggregate's own entry decides, whatever its members say.
+    final aggregateOff = fixtureBody('sdk-config-cm-stripe.json');
+    (channelsOf(aggregateOff)['cm.mobile'] as Map)['available'] = false;
+    expect(slugsOf(buildMethods(session, SdkConfig.fromJson(aggregateOff))), ['card:card']);
+
+    // 2.0 shape (no `cm.mobile`): the members' entries.
+    final members = fixtureBody('sdk-config-cm-stripe.json');
+    channelsOf(members).remove('cm.mobile');
+    expect(slugsOf(buildMethods(session, SdkConfig.fromJson(members))), ['card:card', 'mobile_money:cm.mobile']);
+    (channelsOf(members)['cm.mtn'] as Map)['available'] = false;
+    expect(slugsOf(buildMethods(session, SdkConfig.fromJson(members))), ['card:card', 'mobile_money:cm.mobile'],
+        reason: 'one member is enough');
+    (channelsOf(members)['cm.orange'] as Map)['available'] = false;
+    expect(slugsOf(buildMethods(session, SdkConfig.fromJson(members))), ['card:card']);
   });
 
   test('CH-04 defaults mobile money without sdk-config', () {
-    virtual((async) {
-      final checkout = Checkout(async, loading('session-sandbox-cm.json', config: 'sdk-config-sandbox.json'));
-      final mobile = checkout.method(MethodFamily.mobileMoney);
-      expect(mobile.enabled, isTrue);
-      checkout.controller.selectMethod(mobile);
-      checkout.run(checkout.controller.payMobileMoney);
-      expect(checkout.controller.fieldErrors['data.phone'], isNotNull, reason: 'the form asks for the phone');
-      checkout.end();
-    });
+    // 2.1 sends sandbox Mobile Money entries (`form` + `phone`); a 2.0
+    // answer had none: the same form either way.
+    final withEntries = fixtureBody('sdk-config-sandbox.json');
+    final config = withEntries['channels'] as Map;
+    expect((config['cm.mobile'] as Map)['sdk'], 'form');
+    final withoutEntries = fixtureBody('sdk-config-sandbox.json');
+    (withoutEntries['channels'] as Map).removeWhere((slug, _) => slug != 'card');
+    for (final (name, body) in [('2.1', withEntries), ('2.0', withoutEntries)]) {
+      virtual((async) {
+        final checkout = Checkout(async, loading('session-sandbox-cm.json', config: FakeAnswer(200, body)));
+        final mobile = checkout.method(MethodFamily.mobileMoney);
+        expect(mobile.enabled, isTrue, reason: name);
+        expect(mobile.channels.map((c) => c.slug), ['cm.eu', 'cm.mobile'], reason: name);
+        checkout.controller.selectMethod(mobile);
+        checkout.run(checkout.controller.payMobileMoney);
+        expect(checkout.controller.fieldErrors['data.phone'], isNotNull, reason: 'the form asks for the phone ($name)');
+        checkout.end();
+      });
+    }
   });
 
   test('CH-05 disables channels out of their limits', () {

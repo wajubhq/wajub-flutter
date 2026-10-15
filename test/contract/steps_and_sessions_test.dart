@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
 import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
+import 'package:wajub_mobile/src/models/models.dart';
 
 import '../support/fake_api.dart';
 import '../support/fixtures.dart';
@@ -60,7 +61,8 @@ void main() {
   });
 
   test('CF-02 reads the transaction after a step', () {
-    for (final kind in ['otp', 'pin', 'phone', 'birthday', 'address']) {
+    // 2.0 answers: still processing after the step, wait on the status.
+    for (final kind in ['pin', 'phone', 'birthday', 'address']) {
       virtual((async) {
         final api = hostedCard(
           process: 'process-requires-$kind.json',
@@ -69,7 +71,6 @@ void main() {
         );
         final checkout = payByCard(async, api);
         checkout.run(() => checkout.controller.submitStep({'value': '1'}));
-        // Still processing after the step: wait on the status.
         expect(checkout.controller.state, CheckoutState.pending, reason: kind);
         checkout.elapse(const Duration(seconds: 6));
         expect(checkout.controller.state, CheckoutState.success, reason: kind);
@@ -77,15 +78,87 @@ void main() {
       });
     }
     virtual((async) {
-      final paid = fixtureBody('otp-verify-success.json');
-      (paid['transaction'] as Map)['status'] = 'succeeded';
-      final api =
-          hostedCard(process: 'process-requires-otp.json', more: {'POST /pay/otp/verify': FakeAnswer(200, paid)});
+      // 2.1: a step the provider settles at once is paid at once.
+      final api = hostedCard(
+        process: 'process-requires-otp.json',
+        status: 'status-processing.json',
+        more: {'POST /pay/otp/verify': 'otp-verify-success.json'},
+      );
       final checkout = payByCard(async, api);
       checkout.run(() => checkout.controller.submitStep({'code': '123456'}));
       expect(checkout.controller.state, CheckoutState.success);
+      expect(checkout.recorder.success?.receiptUrl, isNotNull);
       checkout.end();
     });
+    virtual((async) {
+      final failed = fixtureBody('otp-verify-success.json');
+      (failed['transaction'] as Map)['status'] = 'failed';
+      final api =
+          hostedCard(process: 'process-requires-otp.json', more: {'POST /pay/otp/verify': FakeAnswer(200, failed)});
+      final checkout = payByCard(async, api);
+      checkout.run(() => checkout.controller.submitStep({'code': '123456'}));
+      expect(checkout.controller.state, CheckoutState.failed);
+      checkout.end();
+    });
+  });
+
+  test('CF-07 follows a chained step', () {
+    virtual((async) {
+      // A birthday, then an OTP: the OTP screen, its id and contact, a fresh
+      // attempt count; not paid.
+      final api = hostedCard(
+        process: 'process-requires-birthday.json',
+        more: {
+          'POST /pay/birthday/verify': 'birthday-verify-chained-otp.json',
+          'POST /pay/otp/verify': ['otp-verify-invalid.json', 'otp-verify-success.json'],
+        },
+      );
+      final checkout = payByCard(async, api);
+      expect(checkout.controller.state, CheckoutState.birthdayRequired);
+      checkout.run(() => checkout.controller.submitStep({'birthday': '1990-01-31'}));
+      final chained = fixtureBody('birthday-verify-chained-otp.json');
+      expect(checkout.controller.state, CheckoutState.otpRequired);
+      expect(checkout.controller.stepId, chained['otp_id']);
+      expect(checkout.controller.stepHint, chained['otp_masked_contact']);
+      expect(checkout.controller.attemptsRemaining, isNull, reason: 'a fresh count');
+      expect(checkout.recorder.success, isNull);
+      checkout.run(() => checkout.controller.submitStep({'code': '000000'}));
+      expect(checkout.controller.attemptsRemaining, 2);
+      checkout.run(() => checkout.controller.submitStep({'code': '123456'}));
+      expect(api.bodies('/pay/otp/verify').last, {'otp_id': chained['otp_id'], 'code': '123456'});
+      expect(checkout.controller.state, CheckoutState.success);
+      checkout.end();
+    });
+    virtual((async) {
+      // A PIN, then a 3-D Secure page: onRedirect and the browser.
+      final api = hostedCard(
+        process: 'process-requires-pin.json',
+        more: {'POST /pay/pin/verify': 'pin-verify-chained-redirect.json'},
+      );
+      final checkout = payByCard(async, api);
+      checkout.run(() => checkout.controller.submitStep({'pin': '1234'}));
+      final url = fixtureBody('pin-verify-chained-redirect.json')['confirm_url'];
+      expect(checkout.recorder.redirects, [url]);
+      expect(checkout.opened, [url]);
+      expect(checkout.controller.state, isNot(CheckoutState.success));
+      checkout.end();
+    });
+    virtual((async) {
+      // An action the SDK cannot perform.
+      final unknown = fixtureBody('birthday-verify-chained-otp.json')..['action'] = 'confirm_selfie';
+      final api = hostedCard(
+        process: 'process-requires-birthday.json',
+        more: {'POST /pay/birthday/verify': FakeAnswer(200, unknown)},
+      );
+      final checkout = payByCard(async, api);
+      checkout.run(() => checkout.controller.submitStep({'birthday': '1990-01-31'}));
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.error?.code, 'unsupported_action');
+      checkout.end();
+    });
+    // Headless: the next step comes with the answer.
+    final next = StepVerifyResult.fromJson(fixtureBody('birthday-verify-chained-otp.json'));
+    expect(next.action, 'confirm_otp');
   });
 
   test('CF-03 handles step refusals', () {

@@ -1,6 +1,7 @@
 import '../models/json_read.dart';
 import '../models/models.dart';
 import '../models/payment_result.dart';
+import '../models/step_keys.dart';
 import '../models/wajub_error.dart';
 
 /// A 2xx answer of `/pay/process`, `/pay/client-session` or
@@ -282,7 +283,7 @@ class PaymentMapper {
           clientSession: body.clientSession,
         );
     }
-    final step = PaymentStepKind.fromAction(action);
+    final step = stepKindOf(action);
     final stepId = step == null ? null : body.stepIds[step];
     if (step != null && stepId != null) {
       return PaymentRequiresAction(

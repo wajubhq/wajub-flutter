@@ -11,6 +11,7 @@ import '../mapper/payment_mapper.dart';
 import '../models/json_read.dart';
 import '../models/models.dart';
 import '../models/payment_result.dart';
+import '../models/step_keys.dart';
 import '../models/wajub_error.dart';
 import 'client_info.dart';
 import 'ids.dart';
@@ -31,11 +32,11 @@ enum _Retry {
   never,
 }
 
-/// The `/pay/*` calls, with the headers, timeouts and retries of the spec
-/// (README §2). Every method throws a [WajubError] when the call fails.
+/// Sends the SDK's calls to Wajub.
 ///
 /// Pass one to `Wajub.createSession` or `WajubSession` to send the calls
-/// through your own [http.Client] (a proxy, a certificate pin, a test).
+/// through your own [http.Client] (a proxy, certificate pinning, tests). Its
+/// other members serve `WajubSession`; call them through it.
 class PayClient {
   PayClient({
     http.Client? httpClient,
@@ -56,53 +57,47 @@ class PayClient {
   final Stopwatch Function() _newStopwatch;
   final _sent = <String, Stopwatch>{};
 
-  /// Every call gives up connecting after this long.
+  @internal
   static const connectTimeout = Duration(seconds: 10);
 
-  /// Whole-request limit of the reads, cancel, resends and realtime auth.
+  @internal
   static const requestTimeout = Duration(seconds: 30);
 
-  /// Whole-request limit of the calls that reach a payment provider while
-  /// they run: process, client sessions, verify.
+  @internal
   static const paymentRequestTimeout = Duration(seconds: 60);
 
   static const _maxReadRetries = 3;
   static const _maxPostRetries = 2;
   static const _maxRetryAfter = Duration(seconds: 10);
 
-  /// How long ago the last try of `POST /pay/process` or
-  /// `POST /pay/client-session` ([path]) was sent, retries included, on the
-  /// device's monotonic clock. Null before any.
   @internal
   Duration? sinceSent(String path) => _sent[path]?.elapsed;
 
-  /// A stopwatch on the device's monotonic clock (the tests' virtual one).
   @internal
   Stopwatch newStopwatch() => _newStopwatch();
 
-  /// The language of the [WajubError] messages: `fr` or `en`. The device's
-  /// until the payment sheet sets the payment's.
+  /// The language of the [WajubError] messages: `fr` or `en`.
   String language = PlatformDispatcher.instance.locale.languageCode == 'fr' ? 'fr' : 'en';
 
+  @internal
   Future<SessionData> getSession(String token) async {
     final answer = await _send('GET', token, '/pay/session', retry: _Retry.read, loading: true);
     return _parse(answer, SessionData.fromJson);
   }
 
+  @internal
   Future<SdkConfig> getSdkConfig(String token) async {
     final answer = await _send('GET', token, '/pay/sdk-config', retry: _Retry.read, loading: true);
     return _parse(answer, SdkConfig.fromJson);
   }
 
-  /// `GET /pay/status`: the payment's status, by its Wajub id.
+  @internal
   Future<PaymentStatusUpdate> getStatus(String token) async {
     final answer = await _send('GET', token, '/pay/status', retry: _Retry.read, loading: true);
     return _parse(answer, PaymentStatusUpdate.fromJson);
   }
 
-  /// `POST /pay/process`. [data] gets the device signals (`_client`). The
-  /// automatic retries send the same body under the same [idempotencyKey];
-  /// give a new key for each press of Pay.
+  @internal
   Future<RawProcessResponse> process(
     String token,
     String channel,
@@ -125,8 +120,7 @@ class PayClient {
     return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
   }
 
-  /// `POST /pay/client-session` — opens (or re-serves) a PSP-hosted checkout
-  /// for [channel] and pins the provider. Only non-empty options are sent.
+  @internal
   Future<RawProcessResponse> startClientSession(
     String token,
     String channel, {
@@ -155,8 +149,7 @@ class PayClient {
     return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
   }
 
-  /// `POST /pay/client-session/complete` — the backend verifies with the PSP
-  /// by its own reference; the client never sends a PSP reference.
+  @internal
   Future<RawProcessResponse> completeClientSession(String token, String clientSessionId) async {
     final answer = await _send(
       'POST',
@@ -169,9 +162,7 @@ class PayClient {
     return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
   }
 
-  /// `POST /pay/{kind}/verify` with the step's id and [fields] (`code`,
-  /// `pin`, `phone`, `birthday`, or `address`, `city`, `state`, `zip_code`).
-  /// Never retried: on a network error, read the status instead.
+  @internal
   Future<StepVerifyResult> verifyStep(
     String token,
     PaymentStepKind kind,
@@ -185,16 +176,21 @@ class PayClient {
       body: {kind.idKey: stepId, ...fields},
       timeout: paymentRequestTimeout,
     );
-    return _parse(answer, StepVerifyResult.fromJson);
+    return _parse(answer, (json) {
+      final result = StepVerifyResult.fromJson(json);
+      if (!result.success || result.action == null) return result;
+      // Another step: its action and fields read as a 202 of /pay/process.
+      return result.withNext(
+        PaymentMapper.mapProcessAnswer(RawProcessResponse.fromJson(json, httpStatus: 202), 'card'),
+      );
+    });
   }
 
-  /// `POST /pay/{kind}/resend`. The providers have none: the API answers
-  /// 200 and does nothing.
+  @internal
   Future<void> resendStep(String token, PaymentStepKind kind, String stepId) =>
       _send('POST', token, '/pay/${kind.name}/resend', body: {kind.idKey: stepId});
 
-  /// Sandbox 3-D Secure: `POST /pay/3ds/verify`. Accepted codes answer
-  /// HTTP 200 with `code: 202`; a wrong one a 422 — or a 500 today.
+  @internal
   Future<RawProcessResponse> verifyThreeDs(String token, String threeDsId, String code) async {
     final answer = await _send(
       'POST',
@@ -206,20 +202,19 @@ class PayClient {
     return _parse(answer, (json) => RawProcessResponse.fromJson(json, httpStatus: answer.status));
   }
 
-  /// Sandbox 3-D Secure: `POST /pay/3ds/send` sends a new code. Returns the
-  /// masked email it went to.
+  @internal
   Future<String?> sendThreeDs(String token, String threeDsId) async {
     final answer = await _send('POST', token, '/pay/3ds/send', body: {'three_ds_id': threeDsId});
     return readText(answer.body['masked_email']);
   }
 
+  @internal
   Future<CancelResult> cancel(String token) async {
     final answer = await _send('POST', token, '/pay/cancel', body: const {}, retry: _Retry.cancel);
     return CancelResult(redirectUrl: readText(answer.body['redirect_url']));
   }
 
-  /// `POST /pay/broadcasting/auth`: the signature that lets the socket join
-  /// the payment's private channel.
+  @internal
   Future<String> authorizeChannel(String token, String socketId, String channelName) async {
     final answer = await _send(
       'POST',

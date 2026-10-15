@@ -10,6 +10,7 @@ class OperatorChoice {
     required this.label,
     required this.name,
     this.logo,
+    this.logoPng,
     required this.channelSlug,
     required this.configSlug,
     this.viaAggregate = false,
@@ -31,6 +32,9 @@ class OperatorChoice {
 
   /// An `https` URL, else null (the [badge] stands in).
   final String? logo;
+
+  /// The PNG of the same logo, drawn when [logo] does not load.
+  final String? logoPng;
 
   /// The `channel` of `POST /pay/process`: the aggregate's slug for one of
   /// its members, the channel's own slug otherwise.
@@ -99,6 +103,7 @@ List<OperatorChoice> operatorChoices(
     required String id,
     required String name,
     required String? logo,
+    required String? logoPng,
     required String channelSlug,
     required String configSlug,
     required bool viaAggregate,
@@ -110,6 +115,7 @@ List<OperatorChoice> operatorChoices(
       label: brand?.label ?? name,
       name: name,
       logo: _httpsUrl(logo),
+      logoPng: _httpsUrl(logoPng),
       channelSlug: channelSlug,
       configSlug: configSlug,
       viaAggregate: viaAggregate,
@@ -126,6 +132,7 @@ List<OperatorChoice> operatorChoices(
           id: member.operator.toLowerCase(),
           name: member.name,
           logo: member.logo,
+          logoPng: member.logoPng,
           channelSlug: channel.slug,
           configSlug: member.slug,
           viaAggregate: true,
@@ -136,6 +143,7 @@ List<OperatorChoice> operatorChoices(
         id: _afterDot(channel.slug).toLowerCase(),
         name: channel.localizedName(language),
         logo: channel.logo,
+        logoPng: channel.logoPng,
         channelSlug: channel.slug,
         configSlug: channel.slug,
         viaAggregate: false,
