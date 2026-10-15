@@ -574,6 +574,42 @@ void main() {
       });
     }
     virtual((async) {
+      // Closing the failure screen of a refused payment also releases the
+      // order: the result stays the failure the payer saw, without onCancel.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': 'process-failed-402.json',
+        'POST /pay/cancel': 'cancel-200.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.failed);
+      final seen = checkout.controller.error!;
+      checkout.run(checkout.controller.dismiss);
+      expect(api.calls('/pay/cancel'), hasLength(1));
+      final result = checkout.result as CheckoutFailed;
+      expect(result.error.code, seen.code);
+      expect(checkout.recorder.cancel, isNull);
+      expect(checkout.recorder.events, isNot(contains(startsWith('cancel'))));
+    });
+    virtual((async) {
+      // With cancelOnDismiss off, the failure screen closes without a call.
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-cm-aggregate.json',
+        'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+        'POST /pay/process': 'process-failed-402.json',
+        'POST /pay/cancel': 'cancel-200.json',
+      });
+      final checkout = Checkout(async, api, cancelOnDismiss: false);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.run(checkout.controller.dismiss);
+      expect(checkout.result, isA<CheckoutFailed>());
+      expect(api.calls('/pay/cancel'), isEmpty);
+    });
+    virtual((async) {
       // A failed payment is not pending any more: nothing to cancel.
       final api = FakeApi(routes: {
         'GET /pay/session': 'session-cm-aggregate.json',

@@ -75,7 +75,8 @@
 - `POST /pay/cancel` is sent only while the payment's last known status is `pending` and no attempt is undecided,
   from the press of Pay to a definitive answer: "Cancel payment" is not offered while the payer approves, dials a
   USSD code, confirms a step or waits, and closing the sheet there resolves `processing` without a call. After a
-  refusal the payment is pending again and can be cancelled. Closing the sheet while the payment loads resolves
+  refusal the payment is pending again and can be cancelled; closing its failure screen resolves `failed` and
+  also cancels it, so the order is released. Closing the sheet while the payment loads resolves
   `cancelled` without a call; once the session answered, its status decides. While a cancel runs, Pay and Close
   wait for it, and a cancel refused with a status that cannot be read resolves `processing`.
 - Only the payer's own ways out — the close button, a swipe down, back, the barrier — cancel an unpaid payment on a

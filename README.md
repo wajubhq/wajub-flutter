@@ -210,7 +210,9 @@ phone, so:
   approves, dials a USSD code, confirms a step or waits. Closing the sheet there resolves `processing`, without a
   call.
 - After a refusal the payment is `pending` again: "Cancel payment" is back, and closing the sheet from the form
-  cancels it as before any attempt (with `cancelOnDismiss`). Closing it on the failure screen resolves `failed`.
+  cancels it as before any attempt (with `cancelOnDismiss`). Closing it on the failure screen resolves `failed`
+  with the error the payer saw, and also cancels the payment (with `cancelOnDismiss`) so the order is released;
+  `onCancel` does not fire.
 - Closing the sheet while the payment loads resolves `cancelled` (`dismissed`) without a call; once the session has
   answered, its status decides (`processing` resolves `processing`).
 - While a cancel runs, Pay and Close wait for it. A cancel the API refuses reads the status and resolves with it;

@@ -1647,9 +1647,10 @@ class CheckoutController extends ChangeNotifier {
   }
 
   /// The payer closed the sheet: the close button, a swipe down, back. A
-  /// `pending` payment with no attempt under way is cancelled on Wajub
-  /// (unless `cancelOnDismiss` is off); anything else is settled as it
-  /// stands, without a call.
+  /// `pending` payment with no attempt undecided is cancelled on Wajub
+  /// (unless `cancelOnDismiss` is off) — on a failure screen too, where the
+  /// result stays `failed`; anything else is settled as it stands, without
+  /// a call.
   Future<void> dismiss() async {
     if (settled || _closing) return;
     if (_cancelling) {
@@ -1658,7 +1659,10 @@ class CheckoutController extends ChangeNotifier {
       return;
     }
     final result = _resultNow(reason: CancelReason.dismissed);
-    if (result is CheckoutCancelled && options.cancelOnDismiss && _mayCancel && !_isFinal) {
+    // A refused payment is `pending` again: closing its failure screen also
+    // releases the order, and the result stays the failure the payer saw.
+    final releases = result is CheckoutFailed && _screen == CheckoutScreen.failed && !_endedAtLoad;
+    if ((result is CheckoutCancelled || releases) && options.cancelOnDismiss && _mayCancel && !_isFinal) {
       _closing = true;
       notifyListeners();
       String? redirectUrl;
@@ -1667,7 +1671,12 @@ class CheckoutController extends ChangeNotifier {
       } catch (_) {
         // A failed cancel changes nothing for the payer.
       }
-      _finish(CheckoutCancelled(reason: CancelReason.dismissed, redirectUrl: redirectUrl), routeGone: true);
+      _finish(
+        result is CheckoutCancelled
+            ? CheckoutCancelled(reason: CancelReason.dismissed, redirectUrl: redirectUrl)
+            : result,
+        routeGone: true,
+      );
       return;
     }
     _finish(result, routeGone: true);
