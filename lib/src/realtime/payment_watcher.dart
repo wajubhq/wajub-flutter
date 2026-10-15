@@ -16,8 +16,9 @@ enum WatchVerdict {
   cancelled,
   expired,
 
-  /// Still running when the watch's time ran out (15 minutes, or the
-  /// session's `expires_at`): the merchant will be told.
+  /// Still running when the watch's time ran out (15 minutes of the
+  /// device's monotonic clock from the attempt's start; never a server
+  /// timestamp): the merchant will be told.
   capped,
 }
 

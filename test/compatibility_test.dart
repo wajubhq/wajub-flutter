@@ -1,6 +1,7 @@
 // ignore_for_file: deprecated_member_use_from_same_package
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:wajub_mobile/wajub_mobile.dart';
 
 /// Code written against 1.5 compiles and behaves the same: an exhaustive
@@ -27,6 +28,13 @@ String describeType(WajubErrorType type) => switch (type) {
     };
 
 void main() {
+  test('createSession takes a PayClient, which the package exports', () {
+    final client = http.Client();
+    final session = Wajub.createSession('tok_test', client: PayClient(httpClient: client));
+    expect(session.token, 'tok_test');
+    client.close();
+  });
+
   test('the 1.5 public API still compiles and keeps its meaning', () {
     const transaction =
         SessionTransaction(id: 'trx_1', reference: 'R1', amount: 100, currency: 'XAF', status: 'pending');

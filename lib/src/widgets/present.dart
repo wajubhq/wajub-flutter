@@ -29,9 +29,11 @@ Future<CheckoutResult> presentWajubCheckout(BuildContext context, PresentOptions
 
 var _presented = false;
 
-/// Presents the sheet of [controller], which it takes over.
-Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController controller) {
-  if (_presented) {
+/// Presents the sheet of [controller], which it takes over. [exclusive]:
+/// refuse it while another exclusive sheet is open (the deprecated 1.x
+/// entry point stacks, as it did).
+Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController controller, {bool exclusive = true}) {
+  if (exclusive && _presented) {
     controller.dispose();
     return Future.error(WajubError.of('sheet_already_presented'));
   }
@@ -98,10 +100,10 @@ Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController 
     controller.dispose();
     rethrow;
   }
-  _presented = true;
+  if (exclusive) _presented = true;
   // The next sheet may open as soon as this one is gone, while a dismiss's
   // cancel call still runs.
-  var freed = false;
+  var freed = !exclusive;
   void free() {
     if (freed) return;
     freed = true;

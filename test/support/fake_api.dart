@@ -102,8 +102,12 @@ class FakeApi {
     );
   });
 
-  PayClient payClient({Random? random}) =>
-      PayClient(httpClient: httpClient, clientInfo: () async => testClientInfo, random: random ?? Random(7));
+  PayClient payClient({Random? random}) => PayClient(
+        httpClient: httpClient,
+        clientInfo: () async => testClientInfo,
+        random: random ?? Random(7),
+        stopwatch: clock.stopwatch,
+      );
 
   WajubSession session([String token = 'tok_test']) => WajubSession(token, client: payClient());
 }
@@ -164,6 +168,7 @@ CheckoutController checkoutController(
   String deviceLanguage = 'en',
   Future<int?> Function(AltchaChallenge challenge)? altchaSolver,
   Future<String> Function(String publishableKey, String? cardholderName)? stripePaymentMethod,
+  Future<void> Function(String appPublishableKey)? restoreStripeKey,
 }) =>
     CheckoutController(
       session: api.session(options.sessionToken),
@@ -175,6 +180,7 @@ CheckoutController checkoutController(
       mobileMoneyData: () async => mobileMoneyData,
       altchaSolver: altchaSolver ?? (challenge) async => null,
       stripePaymentMethod: stripePaymentMethod,
+      restoreStripeKey: restoreStripeKey ?? (_) async {},
       realtimeConnector: (realtime ?? FakeRealtime(refuse: true)).connect,
       deviceLanguage: deviceLanguage,
       // The test's virtual clock.

@@ -44,6 +44,19 @@ class RealtimeOptions {
   final bool? tls;
 }
 
+/// Your app's own use of `flutter_stripe`, next to the sheet's.
+///
+/// The sheet's Stripe card form sets the global `Stripe.publishableKey` to
+/// the merchant's key from Wajub. When your app also takes Stripe payments
+/// with its own key, give it here: the sheet puts it back (and applies
+/// Stripe's settings again) when it closes after using its card form.
+class StripeOptions {
+  const StripeOptions({this.appPublishableKey});
+
+  /// Your app's own `pk_…`, restored once the sheet closes.
+  final String? appPublishableKey;
+}
+
 /// Everything `presentWajubCheckout` takes (spec types.ts `PresentOptions`).
 class PresentOptions {
   const PresentOptions({
@@ -57,6 +70,7 @@ class PresentOptions {
     this.realtime = const RealtimeOptions(),
     this.cancelOnDismiss = true,
     this.autoCloseSuccess = const Duration(seconds: 3),
+    this.stripe = const StripeOptions(),
     this.callbacks = const CheckoutCallbacks(),
   });
 
@@ -88,5 +102,8 @@ class PresentOptions {
   /// How long the success screen stays before the sheet closes itself.
   /// [Duration.zero] keeps it until the payer closes it.
   final Duration autoCloseSuccess;
+
+  /// Your app's own Stripe key, put back after the sheet's card form.
+  final StripeOptions stripe;
   final CheckoutCallbacks callbacks;
 }

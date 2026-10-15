@@ -84,6 +84,8 @@ class Checkout {
     String deviceLanguage = 'en',
     Future<int?> Function(AltchaChallenge challenge)? altchaSolver,
     Future<String> Function(String publishableKey, String? cardholderName)? stripePaymentMethod,
+    StripeOptions stripe = const StripeOptions(),
+    Future<void> Function(String appPublishableKey)? restoreStripeKey,
     bool load = true,
   }) {
     controller = checkoutController(
@@ -97,6 +99,7 @@ class Checkout {
         autoCloseSuccess: autoCloseSuccess,
         mobileMoney: mobileMoney,
         realtime: realtime,
+        stripe: stripe,
         callbacks: recorder.callbacks,
       ),
       opened: opened,
@@ -105,6 +108,7 @@ class Checkout {
       deviceLanguage: deviceLanguage,
       altchaSolver: altchaSolver,
       stripePaymentMethod: stripePaymentMethod,
+      restoreStripeKey: restoreStripeKey,
     );
     unawaited(controller.result.then((r) => _result = r));
     if (load) {

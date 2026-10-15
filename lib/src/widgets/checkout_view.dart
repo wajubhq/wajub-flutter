@@ -109,96 +109,104 @@ class _WajubCheckoutViewState extends State<WajubCheckoutView> with WidgetsBindi
         controller.screen != CheckoutScreen.loadError &&
         controller.screen != CheckoutScreen.success;
 
-    return WajubTheme(
-      data: theme,
-      child: Theme(
-        data: AppearanceResolver.materialTheme(theme),
-        child: Builder(
-          builder: (context) => DecoratedBox(
-            decoration: BoxDecoration(
-              color: colors.background,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-              boxShadow: [
-                if (theme.elevation > 0)
-                  BoxShadow(
-                      color: const Color(0x33000000), blurRadius: theme.elevation * 4, offset: const Offset(0, -1)),
-              ],
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // The handle and the header stay out of the scrolling part:
-                  // a swipe down on them drags the sheet away.
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(unit * 5, unit * 2, unit * 5, unit * 3),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Center(
-                          child: Container(
-                            key: const ValueKey('wajub-drag-handle'),
-                            width: 36,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: colors.borderStrong,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: unit * 2),
-                        _Header(controller: controller, strings: strings, onClose: widget.onDismissRequested),
-                      ],
-                    ),
-                  ),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      padding: EdgeInsets.fromLTRB(
-                        unit * 5,
-                        0,
-                        unit * 5,
-                        unit * 4 + MediaQuery.viewInsetsOf(context).bottom,
-                      ),
+    // While a cancel runs, a swipe down waits for it, as the close button and
+    // back do: this detector wins the drag over the modal sheet's own.
+    final hold = controller.cancelling ? (Object _) {} : null;
+    return GestureDetector(
+      onVerticalDragStart: hold,
+      onVerticalDragUpdate: hold,
+      onVerticalDragEnd: hold,
+      child: WajubTheme(
+        data: theme,
+        child: Theme(
+          data: AppearanceResolver.materialTheme(theme),
+          child: Builder(
+            builder: (context) => DecoratedBox(
+              decoration: BoxDecoration(
+                color: colors.background,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                boxShadow: [
+                  if (theme.elevation > 0)
+                    BoxShadow(
+                        color: const Color(0x33000000), blurRadius: theme.elevation * 4, offset: const Offset(0, -1)),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // The handle and the header stay out of the scrolling part:
+                    // a swipe down on them drags the sheet away.
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(unit * 5, unit * 2, unit * 5, unit * 3),
                       child: Column(
-                        mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          if (showSummary) ...[
-                            _Summary(controller: controller, strings: strings),
-                            SizedBox(height: unit * 5),
-                          ],
-                          AnimatedSwitcher(
-                            duration: theme.disableAnimations ? Duration.zero : const Duration(milliseconds: 200),
-                            layoutBuilder: (current, previous) => Stack(
-                              alignment: Alignment.topCenter,
-                              children: [...previous, if (current != null) current],
-                            ),
-                            child: KeyedSubtree(
-                              key: ValueKey('${controller.screen.name}-${controller.method?.family.name}'),
-                              child: _screen(controller, strings),
+                          Center(
+                            child: Container(
+                              key: const ValueKey('wajub-drag-handle'),
+                              width: 36,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: colors.borderStrong,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
                             ),
                           ),
-                          if (branding?.whiteLabel != true) ...[
-                            SizedBox(height: unit * 5),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.lock_outline, size: theme.fontSizeHint, color: colors.textPlaceholder),
-                                SizedBox(width: unit),
-                                Text(
-                                  strings.securedBy,
-                                  style: TextStyle(color: colors.textPlaceholder, fontSize: theme.fontSizeHint),
-                                ),
-                              ],
-                            ),
-                          ],
+                          SizedBox(height: unit * 2),
+                          _Header(controller: controller, strings: strings, onClose: widget.onDismissRequested),
                         ],
                       ),
                     ),
-                  ),
-                ],
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(
+                          unit * 5,
+                          0,
+                          unit * 5,
+                          unit * 4 + MediaQuery.viewInsetsOf(context).bottom,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (showSummary) ...[
+                              _Summary(controller: controller, strings: strings),
+                              SizedBox(height: unit * 5),
+                            ],
+                            AnimatedSwitcher(
+                              duration: theme.disableAnimations ? Duration.zero : const Duration(milliseconds: 200),
+                              layoutBuilder: (current, previous) => Stack(
+                                alignment: Alignment.topCenter,
+                                children: [...previous, if (current != null) current],
+                              ),
+                              child: KeyedSubtree(
+                                key: ValueKey('${controller.screen.name}-${controller.method?.family.name}'),
+                                child: _screen(controller, strings),
+                              ),
+                            ),
+                            if (branding?.whiteLabel != true) ...[
+                              SizedBox(height: unit * 5),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.lock_outline, size: theme.fontSizeHint, color: colors.textPlaceholder),
+                                  SizedBox(width: unit),
+                                  Text(
+                                    strings.securedBy,
+                                    style: TextStyle(color: colors.textPlaceholder, fontSize: theme.fontSizeHint),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

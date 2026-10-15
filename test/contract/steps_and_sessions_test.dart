@@ -710,6 +710,28 @@ void main() {
     });
   });
 
+  test('two returns while /complete is slow: a refusal read meanwhile waits for the last completion', () {
+    virtual((async) {
+      final api = paystack(complete: [
+        FakeAnswer.fixture('client-session-complete-202.json', delay: const Duration(seconds: 2)),
+        FakeAnswer.fixture('client-session-complete-200.json', delay: const Duration(seconds: 20)),
+      ])
+        ..on('GET /pay/status', ['status-processing.json', 'status-pending-attempt-refused-live.json']);
+      final checkout = startClientSession(async, api);
+      checkout.controller.onAppPaused();
+      checkout.run(checkout.controller.onAppResumed);
+      checkout.elapse(const Duration(seconds: 1));
+      checkout.controller.onAppPaused();
+      checkout.run(checkout.controller.onAppResumed);
+      checkout.elapse(const Duration(seconds: 10));
+      expect(checkout.controller.state, isNot(CheckoutState.failed), reason: 'the second /complete decides');
+      expect(checkout.recorder.errors, isEmpty);
+      checkout.elapse(const Duration(seconds: 15));
+      expect(checkout.controller.state, CheckoutState.success);
+      checkout.end();
+    });
+  });
+
   test('a 5xx on a step verify keeps the step and reads the status', () {
     virtual((async) {
       final api = hostedCard(

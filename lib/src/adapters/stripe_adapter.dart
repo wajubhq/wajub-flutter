@@ -15,6 +15,14 @@ class StripeAdapter {
     _initialized = true;
   }
 
+  /// Puts the app's own [publishableKey] back after the payment sheet used
+  /// the merchant's.
+  static Future<void> restore(String publishableKey) async {
+    if (_initialized && Stripe.publishableKey == publishableKey) return;
+    Stripe.publishableKey = publishableKey;
+    await Stripe.instance.applySettings();
+  }
+
   /// Creates a Stripe PaymentMethod and returns `pm_*` for `POST /pay/process`.
   static Future<String> createPaymentMethod({String? cardholderName}) async {
     try {

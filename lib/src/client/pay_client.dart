@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' show PlatformDispatcher;
 
-import 'package:clock/clock.dart';
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 
 import '../constants.dart';
 import '../mapper/payment_mapper.dart';
@@ -33,15 +33,25 @@ enum _Retry {
 
 /// The `/pay/*` calls, with the headers, timeouts and retries of the spec
 /// (README §2). Every method throws a [WajubError] when the call fails.
+///
+/// Pass one to `Wajub.createSession` or `WajubSession` to send the calls
+/// through your own [http.Client] (a proxy, a certificate pin, a test).
 class PayClient {
-  PayClient({http.Client? httpClient, Future<ClientInfo> Function()? clientInfo, Random? random})
-      : _http = httpClient ?? createHttpClient(connectTimeout),
+  PayClient({
+    http.Client? httpClient,
+    @visibleForTesting Future<ClientInfo> Function()? clientInfo,
+    @visibleForTesting Random? random,
+    @visibleForTesting Stopwatch Function()? stopwatch,
+  })  : _http = httpClient ?? createHttpClient(connectTimeout),
         _clientInfo = clientInfo ?? ClientInfo.current,
-        _random = random ?? Random();
+        _random = random ?? Random(),
+        _newStopwatch = stopwatch ?? Stopwatch.new;
 
   final http.Client _http;
   final Future<ClientInfo> Function() _clientInfo;
   final Random _random;
+  final Stopwatch Function() _newStopwatch;
+  final _sent = <String, Stopwatch>{};
 
   /// Every call gives up connecting after this long.
   static const connectTimeout = Duration(seconds: 10);
@@ -57,9 +67,11 @@ class PayClient {
   static const _maxPostRetries = 2;
   static const _maxRetryAfter = Duration(seconds: 10);
 
-  /// When the last try of `POST /pay/process` was sent (retries included).
-  DateTime? get lastProcessSentAt => _lastProcessSentAt;
-  DateTime? _lastProcessSentAt;
+  /// How long ago the last try of `POST /pay/process` or
+  /// `POST /pay/client-session` ([path]) was sent, retries included, on the
+  /// device's monotonic clock. Null before any.
+  @internal
+  Duration? sinceSent(String path) => _sent[path]?.elapsed;
 
   /// The language of the [WajubError] messages: `fr` or `en`. The device's
   /// until the payment sheet sets the payment's.
@@ -256,7 +268,7 @@ class PayClient {
           ...headers,
         });
       if (encoded != null) request.body = encoded;
-      if (path == '/pay/process') _lastProcessSentAt = clock.now();
+      if (path == '/pay/process' || path == '/pay/client-session') _sent[path] = _newStopwatch()..start();
 
       http.Response response;
       try {

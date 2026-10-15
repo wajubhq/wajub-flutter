@@ -98,7 +98,8 @@ Future<void> showWajubPaymentSheet({
 }) async {
   final controller =
       CheckoutController(session: session, options: PresentOptions(sessionToken: session.token, locale: locale));
-  final result = await presentCheckout(context, controller);
+  // 1.x stacked a second sheet rather than refusing it: so does this one.
+  final result = await presentCheckout(context, controller, exclusive: false);
   final legacy = legacyResult(result, controller);
   if (legacy == null) {
     onCancel?.call();
@@ -108,11 +109,17 @@ Future<void> showWajubPaymentSheet({
 }
 
 /// A [CheckoutResult] as 1.x reported it; null for a sheet closed without a
-/// payment: cancelled, or a payment that could not load.
-PaymentResult? legacyResult(CheckoutResult result, CheckoutController controller) => switch (result) {
-      CheckoutComplete(:final transaction?) => PaymentComplete(transaction),
-      CheckoutFailed() when controller.screen == CheckoutScreen.loadError || controller.endedAtLoad => null,
-      CheckoutFailed(:final error, :final transaction) => PaymentFailed(error: error, transaction: transaction),
-      CheckoutProcessing(:final transaction?) => PaymentProcessing(transaction),
-      _ => null,
-    };
+/// payment: cancelled, or a payment that could not load. A payment still
+/// running is [PaymentProcessing] with the last transaction known, as 1.x
+/// reported it.
+PaymentResult? legacyResult(CheckoutResult result, CheckoutController controller) {
+  final known = controller.sessionData?.transaction;
+  return switch (result) {
+    CheckoutComplete(:final transaction?) => PaymentComplete(transaction),
+    CheckoutFailed() when controller.screen == CheckoutScreen.loadError || controller.endedAtLoad => null,
+    CheckoutFailed(:final error, :final transaction) => PaymentFailed(error: error, transaction: transaction),
+    CheckoutProcessing(:final transaction) when (transaction ?? known) != null =>
+      PaymentProcessing((transaction ?? known)!),
+    _ => null,
+  };
+}

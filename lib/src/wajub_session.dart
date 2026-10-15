@@ -110,10 +110,31 @@ class WajubSession {
   /// [PaymentRequiresAction.step] and its `stepId` (answer it with
   /// [verifyStep]); the sandbox 3-D Secure code is [ActionKind.confirm3ds]
   /// with a `stepId`; an action missing what it needs is `unsupported_action`.
+  ///
+  /// Every answer is an outcome (the spec's `ProcessOutcome`), never a
+  /// throw: a refusal is [PaymentFailed] with its [WajubError]; a payment
+  /// without an answer (network error, timeout, `5xx` after the retries) or
+  /// already running (`409 payment_in_progress`) is [PaymentProcessing] with
+  /// [ProcessingKind.pending] and the session's transaction — the charge may
+  /// be running: follow [status] or [watchStatus], and if the status still
+  /// reads a plain `pending` 60 s later, call again with the same
+  /// [idempotencyKey] (a request that did arrive is replayed, not charged
+  /// twice). Only a session that cannot load throws.
+  ///
   /// Give one [idempotencyKey] per press of Pay.
   Future<PaymentResult> processPayment(String channel, Map<String, dynamic> data, {String? idempotencyKey}) async {
     final session = await loadSession();
-    final raw = await _client.process(_token, channel, data, idempotencyKey: idempotencyKey);
+    final RawProcessResponse raw;
+    try {
+      raw = await _client.process(_token, channel, data, idempotencyKey: idempotencyKey);
+    } on WajubError catch (error) {
+      final status = error.httpStatus;
+      final unanswered = status == null || status >= 500 || error.code == 'timeout' || error.code == 'network_error';
+      if (unanswered || (status == 409 && error.code == 'payment_in_progress')) {
+        return PaymentProcessing(session.transaction);
+      }
+      return PaymentFailed(error: error);
+    }
     return PaymentMapper.mapProcessAnswer(raw, _methodType(channel), fallback: session.transaction);
   }
 

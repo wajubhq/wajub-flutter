@@ -531,4 +531,278 @@ void main() {
       });
     });
   });
+
+  group('re-validation of 1.6.0 (N1-N5)', () {
+    FakeAnswer statusOf(String status) => FakeAnswer(200, {
+          'transaction': {'reference': 'trx_PVrU8x2kQ1mNa7Lb3cDe', 'status': status},
+        });
+
+    test('N1 a refused cancel settles even when the sheet went away while it ran', () {
+      for (final (status, expected) in [
+        ('expired', CheckoutFailed),
+        ('failed', CheckoutFailed),
+        ('pending', CheckoutFailed),
+        ('succeeded', CheckoutComplete),
+        ('processing', CheckoutProcessing),
+      ]) {
+        for (final away in ['host', 'payer']) {
+          virtual((async) {
+            final api = FakeApi(routes: {
+              'GET /pay/session': 'session-cm-aggregate.json',
+              'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+              'POST /pay/cancel':
+                  FakeAnswer.fixture('cancel-400-not-cancellable.json', delay: const Duration(seconds: 3)),
+              'GET /pay/status': statusOf(status),
+            });
+            final checkout = Checkout(async, api, autoCloseSuccess: Duration.zero);
+            checkout.run(checkout.controller.cancelPayment);
+            if (away == 'host') {
+              checkout.controller.hostGone();
+            } else {
+              checkout.run(checkout.controller.dismiss);
+            }
+            expect(checkout.result, isNull, reason: 'the cancel decides');
+            checkout.elapse(const Duration(seconds: 5));
+            expect(checkout.result.runtimeType, expected, reason: '$status, $away');
+            expect(checkout.recorder.completions, 1);
+            expect(api.calls('/pay/cancel'), hasLength(1));
+          });
+        }
+      }
+    });
+
+    testWidgets('N1 a swipe waits for a running cancel, as Close and back do', (tester) async {
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-sandbox-cm.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/cancel': FakeAnswer.fixture('cancel-400-not-cancellable.json', delay: const Duration(seconds: 3)),
+        'GET /pay/status': statusOf('expired'),
+      });
+      final controller = checkoutController(api);
+      CheckoutResult? result;
+      unawaited(controller.result.then((r) => result = r));
+      await present(tester, controller);
+      expect(controller.canCancel, isTrue);
+      unawaited(controller.cancelPayment());
+      await tester.pump();
+      await tester.flingFrom(
+          tester.getCenter(find.byKey(const ValueKey('wajub-drag-handle'))), const Offset(0, 600), 2000);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byType(BottomSheet), findsOneWidget, reason: 'the swipe waits for the cancel');
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump(const Duration(seconds: 1));
+      expect(controller.state, CheckoutState.expired);
+      expect(result, isNull, reason: 'the payer reads the outcome');
+      final close = find.byKey(const ValueKey('wajub-close'));
+      await tester.ensureVisible(close);
+      await tester.tap(close);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(result, isA<CheckoutFailed>());
+      expect(find.byType(BottomSheet), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    test('N3 the failure screen\'s Close releases a refused payment, as a dismiss does', () {
+      for (final cancelOnDismiss in [true, false]) {
+        virtual((async) {
+          final api = FakeApi(routes: {
+            'GET /pay/session': 'session-cm-aggregate.json',
+            'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+            'POST /pay/process': 'process-failed-402.json',
+            'POST /pay/cancel': 'cancel-200.json',
+          });
+          final checkout = Checkout(async, api, cancelOnDismiss: cancelOnDismiss);
+          checkout.mobileMoney('677123456', pick: 'mtn');
+          checkout.run(checkout.controller.payMobileMoney);
+          expect(checkout.controller.state, CheckoutState.failed);
+          checkout.controller.close();
+          checkout.elapse(const Duration(seconds: 1));
+          expect(api.calls('/pay/cancel'), hasLength(cancelOnDismiss ? 1 : 0));
+          expect((checkout.result as CheckoutFailed).error.code, 'insufficient_funds');
+          expect(checkout.recorder.cancel, isNull);
+        });
+      }
+    });
+
+    test('N4 an accepted attempt is never cancelled before a definitive answer', () {
+      virtual((async) {
+        // A 202 with an action the SDK cannot follow and no transaction.
+        final api = FakeApi(routes: {
+          'GET /pay/session': 'session-cm-aggregate.json',
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'POST /pay/process': const FakeAnswer(202, {'code': 202, 'status': 'Accepted', 'action': 'card_reauth'}),
+          'POST /pay/cancel': 'cancel-200.json',
+        });
+        final checkout = Checkout(async, api);
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        expect(checkout.controller.state, CheckoutState.failed);
+        expect(checkout.controller.error?.code, 'unsupported_action');
+        expect(checkout.recorder.started, isNotNull);
+        expect(checkout.controller.canCancel, isFalse);
+        checkout.run(checkout.controller.dismiss);
+        expect(api.calls('/pay/cancel'), isEmpty);
+        expect(checkout.result, isA<CheckoutFailed>());
+      });
+      // A transaction without a status is not a pending one.
+      final transaction = SessionTransaction.fromJson({'id': 'trx_1', 'amount': 5000, 'currency': 'XAF'});
+      expect(transaction.status, 'unknown');
+    });
+
+    test('N5 a refusal code the payment carried when the sheet opened is not this attempt\'s', () {
+      virtual((async) {
+        final session = fixtureBody('session-cm-aggregate.json');
+        (session['transaction'] as Map)['error_code'] = 'insufficient_funds';
+        final api = FakeApi(routes: {
+          'GET /pay/session': FakeAnswer(200, session),
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'POST /pay/process': const FakeAnswer.network(),
+          'GET /pay/status': 'status-pending-attempt-refused-live.json',
+        });
+        final checkout = Checkout(async, api);
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        checkout.elapse(const Duration(seconds: 30));
+        expect(checkout.controller.state, CheckoutState.pending, reason: 'not read as a refusal of this Pay');
+        checkout.elapse(const Duration(seconds: 40));
+        expect(checkout.controller.state, CheckoutState.collectingDetails, reason: 'it never arrived');
+        checkout.end();
+      });
+    });
+
+    test('an unanswered client session counts its 60 s from its own send', () {
+      virtual((async) {
+        final api = FakeApi(routes: {
+          'GET /pay/session': 'session-cm-aggregate.json',
+          'GET /pay/sdk-config': 'sdk-config-card-paystack.json',
+          'POST /pay/process': 'process-failed-402.json',
+          'POST /pay/client-session': const FakeAnswer.network(),
+          'GET /pay/status': statusOf('pending'),
+        });
+        final checkout = Checkout(async, api, locale: 'en');
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        expect(checkout.controller.error?.code, 'insufficient_funds');
+        checkout.controller.tryAgain();
+        checkout.elapse(const Duration(minutes: 5));
+        checkout.controller.selectMethod(checkout.method(MethodFamily.card));
+        checkout.run(checkout.controller.payCard);
+        checkout.elapse(const Duration(seconds: 20));
+        expect(checkout.controller.state, CheckoutState.pending,
+            reason: 'the /pay/process of 5 minutes ago says nothing');
+        checkout.elapse(const Duration(seconds: 50));
+        expect(checkout.controller.state, CheckoutState.collectingDetails);
+        checkout.end();
+      });
+    });
+
+    test('an unsolved challenge makes the next Pay fetch a new one', () {
+      virtual((async) {
+        final api = FakeApi(routes: {
+          'GET /pay/session': [
+            FakeAnswer(200, sessionWithAltcha('s1', 7)),
+            FakeAnswer(200, sessionWithAltcha('s2', 42)),
+          ],
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'POST /pay/process': 'process-processing-mobile-money-live.json',
+          'GET /pay/status': 'status-processing.json',
+        });
+        var tries = 0;
+        final checkout = Checkout(async, api, altchaSolver: (c) async => tries++ == 0 ? null : solveAltcha(c));
+        checkout.mobileMoney('677123456', pick: 'mtn');
+        checkout.run(checkout.controller.payMobileMoney);
+        expect(checkout.controller.error?.code, 'security_check_failed');
+        expect(api.calls('/pay/process'), isEmpty);
+        checkout.controller.tryAgain();
+        checkout.run(checkout.controller.payMobileMoney);
+        expect(api.calls('/pay/session'), hasLength(2));
+        expect(((api.bodies('/pay/process').single['data'] as Map)['altcha'] as Map)['number'], 42);
+        checkout.end();
+      });
+    });
+
+    test('the app\'s own Stripe key comes back when the sheet closes after its card form', () {
+      for (final (appKey, paid, restored) in [
+        ('pk_live_app', true, ['pk_live_app']),
+        (null, true, <String>[]),
+        ('pk_live_app', false, <String>[]),
+      ]) {
+        virtual((async) {
+          final calls = <String>[];
+          final checkout = Checkout(
+            async,
+            stripeApi(),
+            stripe: StripeOptions(appPublishableKey: appKey),
+            stripePaymentMethod: (key, holder) async => 'pm_test_123',
+            restoreStripeKey: (key) async => calls.add(key),
+          );
+          if (paid) {
+            checkout.controller.selectMethod(checkout.method(MethodFamily.card));
+            checkout.run(checkout.controller.payCard);
+          }
+          checkout.run(checkout.controller.dismiss);
+          expect(checkout.result, isNotNull);
+          expect(calls, restored, reason: '$appKey $paid');
+        });
+      }
+    });
+
+    test('processPayment returns every answer as an outcome', () {
+      for (final (answer, expected) in [
+        (const FakeAnswer.network(), PaymentProcessing),
+        (FakeAnswer.fixture('error-500-production.json'), PaymentProcessing),
+        (FakeAnswer.fixture('process-409-payment-in-progress.json'), PaymentProcessing),
+        (FakeAnswer.fixture('process-failed-402.json'), PaymentFailed),
+      ]) {
+        virtual((async) {
+          final api = FakeApi(routes: {'GET /pay/session': 'session-cm-aggregate.json', 'POST /pay/process': answer});
+          PaymentResult? result;
+          api.session().processPayment('cm.mobile', {'phone': '+237677123456'}).then((r) => result = r);
+          async.elapse(const Duration(minutes: 5));
+          expect(result.runtimeType, expected, reason: '${answer.status}');
+          if (result case PaymentProcessing(:final transaction, :final kind)) {
+            expect(kind, ProcessingKind.pending);
+            expect(transaction.reference, isNotEmpty);
+          }
+          if (result case PaymentFailed(:final error)) expect(error.code, 'insufficient_funds');
+        });
+      }
+    });
+
+    test('the 1.x sheet reports a payment still running with the last transaction known', () {
+      virtual((async) {
+        final checkout = Checkout(
+            async,
+            FakeApi(routes: {
+              'GET /pay/session': 'session-cm-aggregate.json',
+              'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+            }));
+        final legacy = legacyResult(const CheckoutProcessing(), checkout.controller);
+        expect((legacy! as PaymentProcessing).transaction.reference,
+            checkout.controller.sessionData!.transaction.reference);
+        checkout.end();
+      });
+    });
+
+    testWidgets('the 1.x entry point stacks over an open sheet instead of throwing', (tester) async {
+      final first = checkoutController(sandbox(const {}));
+      final context = await present(tester, first);
+      var cancelled = 0;
+      Object? thrown;
+      unawaited(showWajubPaymentSheet(
+        context: context,
+        session: sandbox(const {}).session(),
+        onResult: (_) {},
+        onCancel: () => cancelled++,
+      ).catchError((Object e) => thrown = e));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(thrown, isNull);
+      expect(find.byType(BottomSheet), findsNWidgets(2));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(cancelled, 1, reason: 'reported through its callbacks');
+    });
+  });
 }

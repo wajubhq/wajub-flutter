@@ -7,6 +7,7 @@ export 'src/action_handler.dart';
 export 'src/appearance/appearance.dart';
 export 'src/checkout/checkout_types.dart';
 export 'src/checkout/present_options.dart';
+export 'src/client/pay_client.dart' show PayClient;
 export 'src/constants.dart';
 export 'src/models/models.dart';
 export 'src/models/payment_result.dart';

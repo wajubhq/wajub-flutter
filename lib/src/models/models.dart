@@ -103,6 +103,7 @@ class SessionTransaction {
     this.createdAt,
     this.updatedAt,
     this.terminalAt,
+    this.errorCode,
   });
 
   /// Wajub's payment id (`trx_…`): the realtime channel's suffix.
@@ -119,6 +120,10 @@ class SessionTransaction {
   /// What the payer pays: [amount] plus the fee when the payer bears it.
   final double? amountTotal;
   final String currency;
+
+  /// `pending`, `processing`, `succeeded`… `unknown` when the answer named
+  /// none (1.5 read it as `pending`): never taken for a payment that may be
+  /// cancelled or paid again.
   final String status;
   final String? statusLabel;
   final bool sandbox;
@@ -136,6 +141,10 @@ class SessionTransaction {
   final String? createdAt;
   final String? updatedAt;
   final String? terminalAt;
+
+  /// The refusal code a declined attempt left on the payment, when the
+  /// answer carries it: it stays until the next attempt starts.
+  final String? errorCode;
 
   /// The amount to show and to report: [amountTotal], else [amount].
   double get payableAmount => amountTotal ?? amount;
@@ -160,6 +169,7 @@ class SessionTransaction {
         createdAt: createdAt,
         updatedAt: updatedAt,
         terminalAt: terminalAt,
+        errorCode: errorCode,
       );
 
   /// Throws a [FormatException] when `amount` is not a number: every other
@@ -171,7 +181,7 @@ class SessionTransaction {
         amount: requireDouble(json['amount'], 'transaction.amount'),
         amountTotal: readDouble(json['amount_total']),
         currency: readString(json['currency']) ?? '',
-        status: readString(json['status']) ?? 'pending',
+        status: readString(json['status']) ?? 'unknown',
         statusLabel: readString(json['status_label']),
         sandbox: readBool(json['sandbox']) ?? false,
         description: readString(json['description']),
@@ -186,6 +196,7 @@ class SessionTransaction {
         createdAt: readText(json['created_at']),
         updatedAt: readText(json['updated_at']),
         terminalAt: readText(json['terminal_at']),
+        errorCode: readText(json['error_code']),
       );
 }
 
