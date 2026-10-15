@@ -120,29 +120,46 @@ class MobileMoneyData {
   static String sanitize(String input) => input.replaceAll(RegExp('[^0-9]'), '');
 
   /// `algorithms.national_digits`: the digits without the country's dial
-  /// code and without leading zeros.
+  /// code and without leading zeros; a number of the country's earlier plan
+  /// (`earlier_number`, Benin's 8 digits) takes its prefix in front.
   String nationalDigits(String input, String country) {
     var digits = sanitize(input);
-    final dial = countryFor(country)?.dialDigits;
+    final entry = countryFor(country);
+    final dial = entry?.dialDigits;
     if (dial != null && dial.isNotEmpty && digits.startsWith(dial)) digits = digits.substring(dial.length);
-    return digits.replaceFirst(RegExp('^0+'), '');
+    digits = digits.replaceFirst(RegExp('^0+'), '');
+    final earlier = entry?.earlierNumber;
+    if (earlier != null && digits.length == earlier.length && earlier.startsWith.any(digits.startsWith)) {
+      digits = '${earlier.prefix}$digits';
+    }
+    return digits;
   }
 
   /// `algorithms.validate`: the country's exact national length when it has
-  /// one, else 7 to 15 digits.
+  /// one (and, with an earlier plan, its prefix), else 7 to 15 digits.
   bool isValid(String input, String country) {
-    final length = countryFor(country)?.nationalNumberLength;
-    if (length != null) return nationalDigits(input, country).length == length;
+    final entry = countryFor(country);
+    final length = entry?.nationalNumberLength;
+    if (length != null) {
+      final digits = nationalDigits(input, country);
+      final prefix = entry?.earlierNumber?.prefix;
+      return digits.length == length && (prefix == null || digits.startsWith(prefix));
+    }
     final digits = sanitize(input).length;
     return digits >= looseMinLength && digits <= looseMaxLength;
   }
 
   /// `algorithms.detect_operator`: the operator of the first prefix rule the
-  /// national digits start with. Never an operator-independent wallet.
+  /// national digits start with — read with the earlier plan's prefix in
+  /// front when they lack it, so a number typed the earlier way names its
+  /// operator as it is typed. Never an operator-independent wallet.
   String? detectOperator(String input, String country) {
-    final rules = countryFor(country)?.prefixRules ?? const <PrefixRule>[];
-    final digits = nationalDigits(input, country);
+    final entry = countryFor(country);
+    final rules = entry?.prefixRules ?? const <PrefixRule>[];
+    var digits = nationalDigits(input, country);
     if (digits.isEmpty) return null;
+    final prefix = entry?.earlierNumber?.prefix;
+    if (prefix != null && !digits.startsWith(prefix)) digits = '$prefix$digits';
     for (final rule in rules) {
       if (isOperatorIndependent(rule.operator)) continue;
       if (rule.startsWith.any(digits.startsWith)) return rule.operator;
@@ -151,7 +168,7 @@ class MobileMoneyData {
   }
 
   /// `algorithms.e164`: the dial code, the trunk 0 where the country keeps
-  /// it (Côte d'Ivoire, see the file's `errata`), then the national digits.
+  /// it (Côte d'Ivoire, Benin), then the national digits.
   /// A country the file does not know gets the digits as typed.
   String e164(String input, String country) {
     final entry = countryFor(country);
@@ -191,6 +208,7 @@ class MobileMoneyCountry {
     required this.dialCode,
     this.nationalNumberLength,
     this.keepTrunkZero = false,
+    this.earlierNumber,
     required this.placeholder,
     required this.placeholderFormatted,
     this.operators = const [],
@@ -207,8 +225,11 @@ class MobileMoneyCountry {
   /// The exact number of national digits, when the country has one.
   final int? nationalNumberLength;
 
-  /// The E.164 sent keeps the national trunk 0 (Côte d'Ivoire).
+  /// The E.164 sent keeps the national trunk 0 (Côte d'Ivoire, Benin).
   final bool keepTrunkZero;
+
+  /// The country's earlier, shorter numbering, still typed by payers.
+  final EarlierNumber? earlierNumber;
   final String placeholder;
 
   /// The placeholder as the phone field shows it: `67 12 34 56 7`.
@@ -234,11 +255,31 @@ class MobileMoneyCountry {
       dialCode: dialCode,
       nationalNumberLength: readInt(json['national_number_length']),
       keepTrunkZero: readString(json['e164_trunk_zero']) == 'keep',
+      earlierNumber: EarlierNumber._fromJson(readMap(json['earlier_number'])),
       placeholder: readString(json['placeholder']) ?? '',
       placeholderFormatted: readString(json['placeholder_formatted']) ?? readString(json['placeholder']) ?? '',
       operators: readStringList(json['operators']).map((o) => o.toLowerCase()).toList(),
       prefixRules: readMapList(json['prefix_rules']).map(PrefixRule._fromJson).toList(),
     );
+  }
+}
+
+/// A country's earlier numbering (`earlier_number`): numbers of [length]
+/// digits starting with one of [startsWith] take [prefix] in front (Benin:
+/// `96 12 34 56` is `01 96 12 34 56`).
+class EarlierNumber {
+  const EarlierNumber({required this.length, required this.prefix, required this.startsWith});
+
+  final int length;
+  final String prefix;
+  final List<String> startsWith;
+
+  static EarlierNumber? _fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final length = readInt(json['length']);
+    final prefix = readText(json['prefix']);
+    if (length == null || prefix == null) return null;
+    return EarlierNumber(length: length, prefix: prefix, startsWith: readStringList(json['starts_with']));
   }
 }
 
