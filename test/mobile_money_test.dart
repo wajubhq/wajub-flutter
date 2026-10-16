@@ -111,16 +111,18 @@ void main() {
       final choices = (vector['choices'] as List).cast<String>();
       final selected = vector['selected'] as String?;
       final reason = '$phone in $country, $selected selected';
-      expect(data.detectOperator(phone, country), vector['detected'], reason: reason);
+      final sandbox = vector['sandbox'] == true;
+      expect(data.detectOperator(phone, country, sandbox: sandbox), vector['detected'], reason: reason);
       expect(
-        MobileMoneyRules.validate(data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected),
+        MobileMoneyRules.validate(
+            data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected, sandbox: sandbox),
         vector['expected'],
         reason: reason,
       );
       if (vector['expected'] == 'operator_mismatch') {
         expect(
           MobileMoneyRules.mismatch(
-              data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected),
+              data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected, sandbox: sandbox),
           vector['detected'],
           reason: reason,
         );
@@ -283,25 +285,26 @@ void main() {
     expect(find.bySemanticsLabel('Moov Money'), findsOneWidget);
   });
 
-  test('MM-08 does not block mismatches in sandbox', () {
-    final channels = channelsOf('session-sandbox-cm.json');
-    final ids = operatorChoices(channels, 'CM', data, language: 'en').map((c) => c.id).toList();
-    // A sandbox MTN test number, with Orange picked by hand.
-    const phone = '670000000';
-
-    expect(
-      MobileMoneyRules.mismatch(data: data, phone: phone, country: 'CM', choiceIds: ids, selectedId: 'orange'),
-      'mtn',
-    );
-    expect(
-      MobileMoneyRules.validate(
-          data: data, phone: phone, country: 'CM', choiceIds: ids, selectedId: 'orange', sandbox: true),
-      isNull,
-    );
-    expect(
-      MobileMoneyRules.validate(data: data, phone: phone, country: 'CM', choiceIds: ids, selectedId: 'orange'),
-      'operator_mismatch',
-    );
+  test('MM-08 reads mismatches in sandbox from the test number', () {
+    final sandboxVectors = [
+      for (final vector in (vectors()['validation_and_mismatch'] as List).cast<Map<String, dynamic>>())
+        if (vector['sandbox'] == true) vector,
+    ];
+    expect(sandboxVectors, isNotEmpty);
+    for (final vector in sandboxVectors) {
+      final phone = vector['phone'] as String;
+      final country = vector['country'] as String;
+      final choices = (vector['choices'] as List).cast<String>();
+      final selected = vector['selected'] as String?;
+      final reason = '$phone in $country, $selected selected';
+      expect(data.detectOperator(phone, country, sandbox: true), vector['detected'], reason: reason);
+      expect(
+        MobileMoneyRules.validate(
+            data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected, sandbox: true),
+        vector['expected'],
+        reason: reason,
+      );
+    }
   });
 
   group('MM-09 loads the shared data file', () {

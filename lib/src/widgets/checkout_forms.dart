@@ -165,7 +165,6 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
     final errors = controller.fieldErrors;
     final showList = controller.showOperatorList;
     final badge = showList ? null : controller.badgeOperator;
-    final warning = controller.mismatchWarning;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -255,10 +254,6 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
               child: Text(strings.changeOperator),
             ),
           ),
-        if (warning != null) ...[
-          SizedBox(height: theme.spacingUnit * 2),
-          Banner(message: warning, warning: true),
-        ],
         SizedBox(height: theme.gapRow),
         _PayButton(
           controller: controller,

@@ -586,25 +586,28 @@ void main() {
     });
   });
 
-  test('MM-08 does not block mismatches in the sheet in sandbox', () {
+  test('a sandbox test number of another operator is refused in the sheet', () {
     virtual((async) {
+      // +23768 tests Express Union, where the numbering plan has MTN.
       final api = loading('session-sandbox-cm.json', config: 'sdk-config-sandbox.json')
         ..on('POST /pay/process', 'process-processing-mobile-money-sandbox.json')
         ..on('GET /pay/status', 'status-processing.json');
       final checkout = Checkout(async, api, locale: 'en');
-      checkout.mobileMoney('670000000', pick: 'orange');
-      expect(checkout.controller.mismatchWarning,
-          'This number belongs to MTN MoMo. Pick MTN MoMo in the list, or enter a Orange Money number.');
+      checkout.mobileMoney('680000000', pick: 'mtn');
       checkout.run(checkout.controller.payMobileMoney);
-      expect(api.calls('/pay/process'), hasLength(1));
+      expect(api.calls('/pay/process'), isEmpty);
+      expect(checkout.controller.fieldErrors['data.phone'], startsWith('This number belongs to'));
+      // Its own operator: sent as read.
+      checkout.mobileMoney('680000000', pick: 'eu');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect((api.bodies('/pay/process').single['data'] as Map)['phone'], '+237680000000');
       checkout.end();
     });
     virtual((async) {
-      // In live the same pick is refused before any call.
+      // In live the plan's operator decides.
       final api = loading('session-cm-aggregate.json');
       final checkout = Checkout(async, api, locale: 'en');
       checkout.mobileMoney('670000000', pick: 'orange');
-      expect(checkout.controller.mismatchWarning, isNull);
       checkout.run(checkout.controller.payMobileMoney);
       expect(api.calls('/pay/process'), isEmpty);
       expect(checkout.controller.fieldErrors['data.phone'], startsWith('This number belongs to MTN MoMo.'));

@@ -274,13 +274,6 @@ class CheckoutController extends ChangeNotifier {
     return _choices.where((choice) => choice.id == id).firstOrNull;
   }
 
-  /// In sandbox, a mismatch only warns: its message, or null.
-  String? get mismatchWarning {
-    if (!_sandbox) return null;
-    final detected = _mismatch();
-    return detected == null ? null : _mismatchMessage(detected);
-  }
-
   // ── Card form ────────────────────────────────────────────────────────────
 
   final Map<String, String> _cardFields = {};

@@ -140,23 +140,57 @@ class MobileMoneyData {
   /// the digits they are.
   static String sanitize(String input) => asciiDigits(input).replaceAll(RegExp('[^0-9]'), '');
 
-  /// `algorithms.typed_national_digits`: the digits without the country's
-  /// dial code, nothing else.
-  String typedNationalDigits(String input, String country) {
+  /// `algorithms.typed_national_digits`: the digits as the payer wrote the
+  /// number, without the country's dial code when it was written
+  /// internationally (`+` or `00`) or the dial code is not part of a national
+  /// number; another country's number keeps its own dial code.
+  String typedNationalDigits(String input, String country) => _typed(input, country).digits;
+
+  /// Whether [input] is another country's number: written with `+` or `00`
+  /// and a dial code that is not [country]'s.
+  bool isForeign(String input, String country) => _typed(input, country).foreign;
+
+  /// How [input] is written for [country]. [national]: a leading `00` is
+  /// read as typed digits rather than as the international prefix.
+  _Typed _typed(String input, String country, {bool national = false}) {
     final digits = sanitize(input);
-    final dial = countryFor(country)?.dialDigits;
-    if (dial != null && dial.isNotEmpty && digits.startsWith(dial)) return digits.substring(dial.length);
-    return digits;
+    final entry = countryFor(country);
+    if (entry == null) return _Typed(digits);
+    final dial = entry.dialDigits;
+    final plus = !national && _writtenWithPlus(input);
+    final zeros = !national && !plus && digits.startsWith('00');
+    if (plus || zeros) {
+      final international = zeros ? digits.substring(2) : digits;
+      if (international.startsWith(dial)) return _Typed(international.substring(dial.length));
+      return _Typed(international, foreign: true);
+    }
+    // Written nationally: the dial code goes only when the digits do not
+    // already make a national number (a Ghanaian number may start like it).
+    if (digits.startsWith(dial) && !_isNationalNumber(entry, digits)) return _Typed(digits.substring(dial.length));
+    return _Typed(digits);
   }
 
-  /// `algorithms.national_digits`: the national number as the country's
-  /// plan reads it — an earlier plan's number in its current form, the
-  /// trunk 0 dropped, or the 0 that is part of the number kept (and given
-  /// back to a mobile number typed without it).
-  String nationalDigits(String input, String country) {
-    final entry = countryFor(country);
-    if (entry == null) return sanitize(input).replaceFirst(RegExp('^0+'), '');
-    var digits = typedNationalDigits(input, country);
+  /// The first of [input]'s digits and `+` is a `+`.
+  static bool _writtenWithPlus(String input) {
+    for (final char in asciiDigits(input).split('')) {
+      if (char == '+') return true;
+      if (RegExp('[0-9]').hasMatch(char)) return false;
+    }
+    return false;
+  }
+
+  /// [digits] read by [entry]'s plan make a whole national number.
+  static bool _isNationalNumber(MobileMoneyCountry entry, String digits) {
+    final national = _planSteps(entry, digits);
+    final prefix = entry.numberPrefix;
+    return national.length == entry.nationalNumberLength && (prefix == null || national.startsWith(prefix));
+  }
+
+  /// `algorithms.national_digits` steps 1 and 2: an earlier plan's number in
+  /// its current form, then the trunk 0 dropped, or the 0 that is part of the
+  /// number kept (and given back to a mobile number typed without it).
+  static String _planSteps(MobileMoneyCountry entry, String typed) {
+    var digits = typed;
     final earlier = entry.earlier;
     if (earlier != null && digits.length == earlier.length) {
       final key = earlier.keyStarting(digits);
@@ -172,13 +206,23 @@ class MobileMoneyData {
     return digits;
   }
 
+  /// `algorithms.national_digits`: the national number as the country's plan
+  /// reads it; another country's number as written.
+  String nationalDigits(String input, String country) {
+    final entry = countryFor(country);
+    if (entry == null) return sanitize(input).replaceFirst(RegExp('^0+'), '');
+    final typed = _typed(input, country);
+    return typed.foreign ? typed.digits : _planSteps(entry, typed.digits);
+  }
+
   /// `algorithms.validate`, and in a sandbox session the sandbox's test
-  /// numbers.
+  /// numbers. Another country's number is never valid.
   bool isValid(String input, String country, {bool sandbox = false}) {
     if (sandbox && sandboxTestNumber(input, country) != null) return true;
     final entry = countryFor(country);
     final length = entry?.nationalNumberLength;
     if (entry != null && length != null) {
+      if (isForeign(input, country)) return false;
       final digits = nationalDigits(input, country);
       final prefix = entry.numberPrefix;
       return digits.length == length && (prefix == null || digits.startsWith(prefix));
@@ -189,15 +233,15 @@ class MobileMoneyData {
 
   /// `algorithms.detect_operator`: the operator whose range the number is
   /// in, read in its current form while it is still being typed; in a
-  /// sandbox session, a test number's operator. Never an
-  /// operator-independent wallet.
+  /// sandbox session, a test number's operator. None for another country's
+  /// number. Never an operator-independent wallet.
   String? detectOperator(String input, String country, {bool sandbox = false}) {
     if (sandbox) {
       final test = sandboxTestNumber(input, country);
       if (test != null) return test.operator;
     }
     final entry = countryFor(country);
-    if (entry == null) return null;
+    if (entry == null || isForeign(input, country)) return null;
     var digits = nationalDigits(input, country);
     if (digits.isEmpty) return null;
     if (entry.numberPrefix != null && !digits.startsWith('0')) {
@@ -211,9 +255,9 @@ class MobileMoneyData {
     return null;
   }
 
-  /// `algorithms.e164`: the dial code, then the national digits; in a
-  /// sandbox session, a test number as it was read. A country the file does
-  /// not know gets the digits as typed.
+  /// `algorithms.e164`: the dial code, then the national digits; another
+  /// country's number as written; in a sandbox session, a test number as it
+  /// was read. A country the file does not know gets the digits as typed.
   String e164(String input, String country, {bool sandbox = false}) {
     if (sandbox) {
       final test = sandboxTestNumber(input, country);
@@ -221,19 +265,26 @@ class MobileMoneyData {
     }
     final entry = countryFor(country);
     if (entry == null) return '+${sanitize(input)}';
-    return '${entry.dialCode}${nationalDigits(input, country)}';
+    final typed = _typed(input, country);
+    if (typed.foreign) return '+${typed.digits}';
+    return '${entry.dialCode}${_planSteps(entry, typed.digits)}';
   }
 
   /// `algorithms.sandbox_test_number`: [input] as a sandbox test number of
   /// [country] — its operator and what is sent — or null. Only for a
-  /// sandbox session.
+  /// sandbox session. Read by the plan, then as typed after the dial code
+  /// (its 0s kept), then with a leading `00` read as typed digits; never as
+  /// another country's number.
   SandboxTestNumber? sandboxTestNumber(String input, String country) {
     final entry = countryFor(country);
     final prefixes = sandboxPrefixes[country.toUpperCase()];
     if (entry == null || prefixes == null || prefixes.isEmpty) return null;
+    final dial = entry.dialDigits;
+    final typed = _typed(input, country);
     final readings = [
-      '${entry.dialDigits}${nationalDigits(input, country)}',
-      '${entry.dialDigits}${typedNationalDigits(input, country)}',
+      if (!typed.foreign) '$dial${_planSteps(entry, typed.digits)}',
+      if (!typed.foreign) '$dial${typed.digits}',
+      '$dial${_typed(input, country, national: true).digits}',
     ];
     for (final reading in readings) {
       SandboxPrefix? found;
@@ -380,6 +431,14 @@ class EarlierPlan {
         if (readText(entry.value) != null) entry.key: readText(entry.value)!,
     });
   }
+}
+
+/// A number's digits as written, and whether it is another country's.
+class _Typed {
+  const _Typed(this.digits, {this.foreign = false});
+
+  final String digits;
+  final bool foreign;
 }
 
 /// A sandbox test number prefix: its digits (dial code included, no `+`)

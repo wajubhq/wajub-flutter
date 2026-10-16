@@ -6,8 +6,8 @@ import 'operator_choice.dart';
 abstract final class MobileMoneyRules {
   /// What stops a submission, checked in this order: `phone_required`,
   /// `invalid_phone`, `operator_mismatch`, `operator_required`; null when
-  /// nothing does. In [sandbox] a mismatch does not block: sandbox prefixes
-  /// do not follow real numbering plans.
+  /// nothing does. In a [sandbox] session a test number's operator is its
+  /// prefix's, and a mismatch blocks as in live.
   static String? validate({
     required MobileMoneyData data,
     required String phone,
@@ -26,7 +26,7 @@ abstract final class MobileMoneyRules {
       selectedId: selectedId,
       sandbox: sandbox,
     );
-    if (mismatched != null && !sandbox) return 'operator_mismatch';
+    if (mismatched != null) return 'operator_mismatch';
     if (selectedId == null || !choiceIds.contains(selectedId)) return 'operator_required';
     return null;
   }

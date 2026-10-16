@@ -23,9 +23,10 @@ Everything that changed since 1.1.1.
 - Mobile Money: one form for every operator of the payment, with the country, the operators and their logos, and
   the number formatted as it is typed. Numbers are read by each country's current numbering plan (a number typed
   the earlier way is taken in its current form), and the operator is recognised from the number: it is preselected
-  until the payer picks one, and a number of another operator is refused before anything is sent (a warning only
-  in sandbox). A sandbox session accepts the sandbox test numbers with the operator they test. After Pay, "Approve
-  the payment on your phone" with the operator's instructions, or a USSD code to dial.
+  until the payer picks one, and a number of another operator is refused before anything is sent. A number written
+  with 00 is read like one written with +, and another country's number is refused. A sandbox session accepts the
+  sandbox test numbers with the operator they test. After Pay, "Approve the payment on your phone" with the
+  operator's instructions, or a USSD code to dial.
 - Cards: Stripe's card form (it needs `FlutterFragmentActivity` on Android), the provider's secure page or its own
   checkout in the system browser with "Continue payment" to reopen it, and a test card form in sandbox. One-tap
   wallets are offered too. Your app never handles card numbers in live.
