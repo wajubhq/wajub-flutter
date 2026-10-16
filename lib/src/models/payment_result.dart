@@ -1,11 +1,13 @@
 import 'models.dart';
+import 'payer_otp.dart';
 import 'wajub_error.dart';
 
 /// What a [PaymentRequiresAction] asks for. A confirmation step is [confirm]
 /// with [PaymentRequiresAction.step] set and no URL; the sandbox 3-D Secure
 /// email code is [confirm3ds] with a [PaymentRequiresAction.stepId] and no
-/// URL.
-enum ActionKind { redirect, confirm, confirm3ds, pushApproval, clientSession }
+/// URL; the code the payer generates in the operator's menu is [payerOtp]
+/// with [PaymentRequiresAction.payerOtp].
+enum ActionKind { redirect, confirm, confirm3ds, pushApproval, clientSession, payerOtp }
 
 /// What a payment in progress leaves the payer to do.
 enum ProcessingKind {
@@ -68,6 +70,7 @@ class PaymentRequiresAction extends PaymentResult {
     this.stepId,
     this.hint,
     this.timeoutSeconds,
+    this.payerOtp,
   });
 
   final ActionKind action;
@@ -94,6 +97,11 @@ class PaymentRequiresAction extends PaymentResult {
 
   /// Sandbox 3-D Secure: seconds the code is valid for.
   final int? timeoutSeconds;
+
+  /// Set when [action] is [ActionKind.payerOtp]: how the payer generates the
+  /// code their operator asks for. Nothing was charged; send the same payment
+  /// again with the code as `otp` in its data, under a new idempotency key.
+  final PayerOtpInstructions? payerOtp;
 }
 
 class PaymentFailed extends PaymentResult {

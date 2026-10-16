@@ -5,6 +5,8 @@ import 'package:wajub_mobile/src/checkout/checkout_types.dart';
 import 'package:wajub_mobile/src/errors/error_catalogue.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/payer_otp.dart';
+import 'package:wajub_mobile/src/models/payment_result.dart';
+import 'package:wajub_mobile/wajub_mobile.dart' as public;
 
 import '../support/fake_api.dart';
 import '../support/fixtures.dart';
@@ -248,6 +250,50 @@ void main() {
       true,
       false
     ], reason: 'no length: 4 to 8 digits');
+  });
+
+  test('MM-12 asks for the payer\'s code the charge asks for (processPayment)', () {
+    virtual((async) {
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-payer-otp-announced.json',
+        'POST /pay/process': [
+          'process-payer-otp-required.json',
+          'process-payer-otp-refused.json',
+          'process-payer-otp-accepted-sandbox.json',
+        ],
+      });
+      final session = api.session();
+      final results = <PaymentResult>[];
+      const data = {'phone': '+22670000000', 'country': 'BF'};
+      session.processPayment('bf.orange', data, idempotencyKey: 'key-1').then(results.add);
+      async.flushMicrotasks();
+
+      final asked = results.single as PaymentRequiresAction;
+      expect(asked.action, ActionKind.payerOtp);
+      expect(asked.transaction.status, 'pending', reason: 'nothing was charged');
+      final public.PayerOtpInstructions instructions = asked.payerOtp!;
+      expect((instructions.channel, instructions.ussdCode, instructions.otpLength), ('bf.orange', '*144*4*6#', 6));
+      expect((instructions.amount, instructions.currency), ('1000', 'XOF'));
+      expect((instructions.reason, instructions.attemptsRemaining), ('required', 3));
+      expect(instructions.stepsFor('fr').first.text, 'Sur le téléphone du compte Orange Money, composez *144*4*6#.');
+      expect(instructions.dialUrl, 'tel:*144*4*6%23');
+
+      session.processPayment('bf.orange', {...data, 'otp': '654321'}, idempotencyKey: 'key-2').then(results.add);
+      async.flushMicrotasks();
+      final refused = results.last as PaymentRequiresAction;
+      expect((refused.action, refused.payerOtp?.reason, refused.payerOtp?.attemptsRemaining),
+          (ActionKind.payerOtp, 'refused', 2));
+
+      session.processPayment('bf.orange', {...data, 'otp': '123456'}, idempotencyKey: 'key-3').then(results.add);
+      async.flushMicrotasks();
+      expect((results.last as PaymentRequiresAction).action, ActionKind.pushApproval, reason: 'approve as usual');
+      expect(api.bodies('/pay/process').map((b) => (b['data'] as Map)['otp']), [null, '654321', '123456']);
+
+      // The channel that announces it says so too.
+      final channel = SessionData.fromJson(fixtureBody('session-payer-otp-announced.json')).channels.first;
+      final public.PayerOtpInstructions? announced = channel.payerOtp;
+      expect((announced?.ussdCode, announced?.reason), ('*144*4*6#', null));
+    });
   });
 
   test('MM-13 handles refused payer codes', () {

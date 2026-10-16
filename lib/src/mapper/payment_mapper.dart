@@ -288,6 +288,8 @@ class PaymentMapper {
           transaction: txn,
           clientSession: body.clientSession,
         );
+      case 'payer_otp' when body.payerOtp != null:
+        return PaymentRequiresAction(action: ActionKind.payerOtp, transaction: txn, payerOtp: body.payerOtp);
     }
     final step = stepKindOf(action);
     final stepId = step == null ? null : body.stepIds[step];

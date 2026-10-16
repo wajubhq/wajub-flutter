@@ -1,11 +1,16 @@
+import 'package:meta/meta.dart';
+
 import 'json_read.dart';
 
-/// One step to get the payer's own code: [text] filled in, [template] with
-/// `{ussd_code}`, `{amount}` and `{currency}` left to fill.
+/// One step to get the payer's own code.
 class PayerOtpStep {
   const PayerOtpStep({required this.text, this.template});
 
+  /// The step, ready to show.
   final String text;
+
+  /// The same step with `{ussd_code}`, `{amount}` and `{currency}` left to
+  /// fill, to show those values your own way.
   final String? template;
 
   static PayerOtpStep? fromJson(Object? json) {
@@ -17,10 +22,12 @@ class PayerOtpStep {
 }
 
 /// What a part of a step is: plain words, the code to dial, the amount.
+@internal
 enum PayerOtpPart { text, ussdCode, amount }
 
-/// How the payer generates the code their operator asks for, for the exact
-/// amount, in the operator's menu. Internal: the payment sheet shows it.
+/// How the payer generates, in the operator's menu, the code their operator
+/// asks for before the payment, for its exact amount. The payment sheet
+/// shows it by itself.
 class PayerOtpInstructions {
   const PayerOtpInstructions({
     required this.channel,
@@ -33,6 +40,7 @@ class PayerOtpInstructions {
     this.attemptsRemaining,
   });
 
+  /// The channel the code is for.
   final String channel;
 
   /// The code to dial (`*144*4*6#`), shown as is.
@@ -41,31 +49,35 @@ class PayerOtpInstructions {
   /// The code's exact number of digits; null: 4 to 8.
   final int? otpLength;
 
-  /// The exact amount to type, as sent: never reformatted.
+  /// The exact amount the payer types in the operator's menu: show it as
+  /// it is, never reformatted.
   final String amount;
   final String currency;
 
   /// By language (`fr`, `en`…).
   final Map<String, List<PayerOtpStep>> steps;
 
-  /// Why a charge asks for it: `required`, `invalid`, `refused`. Null when
-  /// announced by the session.
+  /// Why the payment asks for it: `required` (no code yet), `invalid` (not
+  /// the right length; it does not count), `refused` (the operator did not
+  /// accept it). Null when the payment's channel announces it.
   final String? reason;
 
   /// Codes the operator may still refuse for this payment on this channel.
   final int? attemptsRemaining;
 
   /// A `tel:` link that opens the dialer on [ussdCode] (`#` written
-  /// `%23`), or null without one.
+  /// `%23`), or null without one. Android dials it; iOS refuses `*` and `#`
+  /// in a link, so offer to copy the code there.
   String? get dialUrl {
     final code = ussdCode;
     return code == null ? null : 'tel:${code.replaceAll('#', '%23')}';
   }
 
+  /// The shortest and the longest code when [otpLength] does not say.
   static const minLength = 4;
   static const maxLength = 8;
 
-  /// Whether [code] (ASCII digits) has the length the operator wants.
+  /// Whether [code] is digits 0-9 of the length the operator wants.
   bool accepts(String code) {
     if (!RegExp(r'^[0-9]+$').hasMatch(code)) return false;
     final length = otpLength;
@@ -83,6 +95,7 @@ class PayerOtpInstructions {
 
   /// [step] in parts: from its template when every value it names is known,
   /// else its plain text.
+  @internal
   List<(PayerOtpPart, String)> parts(PayerOtpStep step) {
     final template = step.template;
     if (template == null) return [(PayerOtpPart.text, step.text)];

@@ -125,9 +125,12 @@ class WajubSession {
   /// confirmation step is [PaymentRequiresAction] with [ActionKind.confirm],
   /// a [PaymentRequiresAction.step] and its `stepId` (answer it with
   /// [verifyStep]); the sandbox 3-D Secure code is [ActionKind.confirm3ds]
-  /// with a `stepId`; a refusal is [PaymentFailed]; a payment whose outcome
-  /// is not known yet is [PaymentProcessing] — follow it with [status] or
-  /// [watchStatus]. Only a payment that cannot be loaded throws.
+  /// with a `stepId`; the code the payer generates in the operator's menu is
+  /// [ActionKind.payerOtp] with its [PaymentRequiresAction.payerOtp] (call
+  /// again with the code as `otp` in [data] and a new [idempotencyKey]); a
+  /// refusal is [PaymentFailed]; a payment whose outcome is not known yet is
+  /// [PaymentProcessing] — follow it with [status] or [watchStatus]. Only a
+  /// payment that cannot be loaded throws.
   ///
   /// Give one [idempotencyKey] per press of Pay, and the same one again to
   /// retry a payment whose outcome is not known: it is never charged twice.

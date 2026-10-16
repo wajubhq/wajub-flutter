@@ -29,7 +29,7 @@ Everything that changed since 1.1.1.
   operator's instructions, or a USSD code to dial.
 - When what the payer pays depends on the method or the operator, the amount on Pay, in the summary and on the
   approval screen is the one chosen, and follows the number as it is typed; `PaymentSuccess.amount` is what was
-  charged.
+  charged. `SessionChannel` and `ChannelOperator` gain `feeAmount` and `amountTotal`.
 - When the operator wants a code the payer generates in its menu before paying, the sheet shows how
   (`PAYER_OTP_REQUIRED`): the code to dial, with a Copy button (and a link to the dialer on Android), the exact
   amount to enter and the steps, then takes the code (in sandbox, `123456`). A refused code can be entered again;
@@ -60,19 +60,22 @@ Everything that changed since 1.1.1.
   `authenticationError` from `WajubError.fromHttp`), a server error an `apiError`, and a token that is not a
   payment is not retryable; they used to come back as retryable `paymentError`s. A decline code the SDK does not
   know reads "This payment could not be completed…".
-- **`ActionKind` has a new value, `clientSession`**: an exhaustive `switch` over `ActionKind` needs a case for it.
-  `PaymentRequiresAction` gains `clientSession`, `step`, `stepId`, `hint` and `timeoutSeconds`, and
-  `PaymentProcessing` gains `kind` (`ProcessingKind`: approve on the phone, dial a code, or wait).
+- **`ActionKind` has new values, `clientSession` and `payerOtp`**: an exhaustive `switch` over `ActionKind` needs a
+  case for each. `PaymentRequiresAction` gains `clientSession`, `step`, `stepId`, `hint`, `timeoutSeconds` and
+  `payerOtp`, and `PaymentProcessing` gains `kind` (`ProcessingKind`: approve on the phone, dial a code, or wait).
 - An action the SDK cannot handle is `PaymentFailed` with code `unsupported_action`, instead of
   `PaymentProcessing`.
 - For apps with their own UI, `WajubSession` gains `processPayment()`, which returns every answer as an outcome: a
-  confirmation step as `PaymentRequiresAction` with `ActionKind.confirm` and its `step` and `stepId`; a refusal as
-  `PaymentFailed`; a payment whose outcome is not known yet as `PaymentProcessing`. `verifyStep()` (whose answer
-  gives the next step in `StepVerifyResult.next`, when there is one), `resendStep()`, `verifyThreeDs()`,
-  `sendThreeDs()` and `status()` complete it, with `payWallet()` for one-tap wallets, `payCardHostedRedirect()`
-  for a card paid on the provider's page, and `startClientSession()` / `completeClientSession()` (the new
-  `ClientSession` model) for a card paid on the provider's own checkout. `PayClient` is exported:
-  `Wajub.createSession(token, client: PayClient(httpClient: …))` uses your own `http.Client`.
+  confirmation step as `PaymentRequiresAction` with `ActionKind.confirm` and its `step` and `stepId`; the code the
+  payer generates in the operator's menu as `ActionKind.payerOtp` with its `PayerOtpInstructions` (send the same
+  payment again with the code as `otp`, under a new idempotency key), also on `SessionChannel.payerOtp` when the
+  channel announces it; a refusal as `PaymentFailed`; a payment whose outcome is not known yet as
+  `PaymentProcessing`. `verifyStep()` (whose answer gives the next step in `StepVerifyResult.next`, when there is
+  one), `resendStep()`, `verifyThreeDs()`, `sendThreeDs()` and `status()` complete it, with `payWallet()` for
+  one-tap wallets, `payCardHostedRedirect()` for a card paid on the provider's page, and `startClientSession()` /
+  `completeClientSession()` (the new `ClientSession` model) for a card paid on the provider's own checkout.
+  `PayClient` is exported: `Wajub.createSession(token, client: PayClient(httpClient: …))` uses your own
+  `http.Client`.
 - The other `WajubSession` calls (`process()`, `payMobileMoney()`, `payCard()`…) take new optional parameters and
   read a confirmation step as `unsupported_action`. `MobileMoneyInput.phone` is sent as you give it: give it in
   E.164 (`+237677123456`); `MobileMoneyInput.operator` names the operator of a channel that groups several.

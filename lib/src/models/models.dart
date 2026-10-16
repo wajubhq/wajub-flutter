@@ -312,8 +312,8 @@ class SessionChannel {
   final double? amountTotal;
 
   /// The code the payer generates in the operator's menu before paying with
-  /// this channel, when the operator asks for one.
-  @internal
+  /// this channel, when the operator asks for one: ask for it before the
+  /// first payment, and send it as `otp` with it.
   final PayerOtpInstructions? payerOtp;
 
   /// Whether the channel groups several operators of one country.

@@ -15,6 +15,7 @@ String describe(PaymentResult result) => switch (result) {
           ActionKind.confirm3ds => 'confirm3ds',
           ActionKind.pushApproval => 'pushApproval',
           ActionKind.clientSession => 'clientSession',
+          ActionKind.payerOtp => 'payerOtp',
         },
       PaymentFailed() => 'failed',
     };

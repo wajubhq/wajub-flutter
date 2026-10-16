@@ -1180,6 +1180,9 @@ class CheckoutController extends ChangeNotifier {
       case ActionKind.confirm3ds when result.stepId != null:
         _showThreeDs(result.stepId!, result.hint, result.timeoutSeconds);
         _watch();
+      case ActionKind.payerOtp:
+        // Read from the answer itself, before this; never a page to open.
+        _fail(WajubError.of(PaymentMapper.unsupportedActionCode, language: language));
       case ActionKind.clientSession:
         final url = result.actionUrl;
         if (url == null) {
