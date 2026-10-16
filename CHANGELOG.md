@@ -36,8 +36,8 @@ Everything that changed since 1.1.1.
 - Closing the sheet: while the payment loads, `cancelled`; before any payment, `cancelled` and the payment is
   cancelled (unless `cancelOnDismiss` is `false`); while a payment is under way, `processing`, and the payment keeps
   running; on the failure screen, `failed`, and the payment is cancelled when it still can be. "Cancel payment" is
-  offered only while no payment is under way. When the page that presented the sheet goes away, the sheet resolves
-  without cancelling anything.
+  offered only while no payment is under way, and a payment being paid that Wajub refuses to cancel stays as it is.
+  When the page that presented the sheet goes away, the sheet resolves without cancelling anything.
 - Numbers and codes typed with the digits of another script (an Arabic or Persian keyboard, for instance) are
   taken as the digits they are; a code that is not made of digits is refused before anything is sent.
 - The sheet never shows a failure when the outcome is unknown: it shows "Payment in progress", and closing it then

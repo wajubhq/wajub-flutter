@@ -1297,11 +1297,24 @@ class CheckoutController extends ChangeNotifier {
   void _showStep(PaymentStepKind kind, String id, String? hint) {
     _stepKind = kind;
     _stepId = id;
-    _stepHint = hint;
+    _stepHint = kind == PaymentStepKind.otp ? maskedContact(hint) : hint;
     _attemptsRemaining = null;
     _resendAt = clock.now().add(const Duration(seconds: 60));
     _clearMessages();
     _enter(_stepState(kind), CheckoutScreen.step);
+  }
+
+  /// Where an OTP was sent, masked (`080******78`), or null when the
+  /// provider names none. An older answer gave the provider's whole
+  /// sentence: only its masked contact is kept.
+  @visibleForTesting
+  static String? maskedContact(String? text) {
+    final trimmed = text?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    if (!trimmed.contains(RegExp(r'\s'))) return trimmed;
+    final tokens = trimmed.split(RegExp(r'\s+')).where((token) => token.contains('*') || token.contains('@'));
+    if (tokens.isEmpty) return null;
+    return tokens.last.replaceFirst(RegExp(r'[.,;:!?]+$'), '');
   }
 
   static CheckoutState _stepState(PaymentStepKind kind) => switch (kind) {
@@ -1754,7 +1767,9 @@ class CheckoutController extends ChangeNotifier {
           routeGone: _routeGone);
     } on WajubError catch (e) {
       if (settled) return;
-      if (e.httpStatus == 400) {
+      if (e.httpStatus == 400 || e.httpStatus == 409) {
+        // Refused (not cancellable, being paid, partly paid): the payment
+        // stays as it is; its status says how it stands.
         await _settleRefusedCancel();
         return;
       }

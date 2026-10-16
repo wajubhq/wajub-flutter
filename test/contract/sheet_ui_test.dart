@@ -340,6 +340,39 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('the OTP screen says where the code was sent, and nothing when the provider names nowhere',
+      (tester) async {
+    for (final (contact, shown) in [
+      ('080******78', 'Enter the code sent to 080******78.'),
+      ('', null),
+      ('Please enter the OTP sent to 080******78', 'Enter the code sent to 080******78.'),
+    ]) {
+      final otp = fixtureBody('process-requires-otp.json')..['otp_masked_contact'] = contact;
+      final sheet = Sheet(
+        FakeApi(routes: {
+          'GET /pay/session': 'session-cm-aggregate.json',
+          'GET /pay/sdk-config': 'sdk-config-card-mollie.json',
+          'POST /pay/process': FakeAnswer(202, otp),
+          'GET /pay/status': 'status-processing.json',
+        }),
+        options: const PresentOptions(sessionToken: 'tok_test', locale: 'en'),
+      );
+      await sheet.open(tester);
+      sheet.controller.selectMethod(sheet.controller.methods.firstWhere((m) => m.family == MethodFamily.card));
+      unawaited(sheet.controller.payCard());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('wajub-step-code')), findsOneWidget, reason: contact);
+      if (shown == null) {
+        expect(find.textContaining('sent to'), findsNothing, reason: 'an empty contact: the prompt alone');
+      } else {
+        expect(find.text(shown), findsOneWidget, reason: contact);
+        expect(find.textContaining('Please enter'), findsNothing, reason: "never the provider's sentence");
+      }
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
   testWidgets('a confirmation code typed in Arabic-Indic digits shows as 0-9', (tester) async {
     final sheet = Sheet(FakeApi(routes: {
       'GET /pay/session': 'session-cm-aggregate.json',

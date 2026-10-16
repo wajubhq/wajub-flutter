@@ -740,6 +740,34 @@ void main() {
       checkout.run(checkout.controller.dismiss);
       expect(api.calls('/pay/cancel'), isEmpty);
     });
+    for (final (refusal, status, expected) in [
+      ('cancel-409-payment-in-progress.json', 'processing', CheckoutProcessing),
+      ('cancel-409-payment-partly-paid.json', 'partial', CheckoutProcessing),
+      ('cancel-409-payment-in-progress.json', 'succeeded', CheckoutComplete),
+    ]) {
+      virtual((async) {
+        // The API refuses to cancel a payment being paid (409): the status
+        // is read again and decides; never `cancelled`.
+        final api = FakeApi(routes: {
+          'GET /pay/session': 'session-cm-aggregate.json',
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'POST /pay/cancel': refusal,
+          'GET /pay/status': FakeAnswer(200, {
+            'transaction': {'reference': 'trx_PVrU8x2kQ1mNa7Lb3cDe', 'status': status},
+          }),
+        });
+        final checkout = Checkout(async, api, autoCloseSuccess: Duration.zero);
+        checkout.run(checkout.controller.cancelPayment);
+        expect(api.calls('/pay/cancel'), hasLength(1), reason: refusal);
+        expect(api.calls('/pay/status'), hasLength(1), reason: refusal);
+        if (expected == CheckoutComplete) {
+          expect(checkout.controller.state, CheckoutState.success);
+          checkout.controller.close();
+        }
+        expect(checkout.result.runtimeType, expected, reason: '$refusal, $status');
+        expect(checkout.recorder.cancel, isNull, reason: 'no cancelled result');
+      });
+    }
     virtual((async) {
       // A refused cancel whose status cannot be read: money may move.
       final api = FakeApi(routes: {

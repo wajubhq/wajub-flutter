@@ -52,7 +52,7 @@ Map<String, dynamic> withUnknownKeys(Map<String, dynamic> body) {
 void main() {
   test('PR-01 parses every fixture', () {
     final names = fixtureNames();
-    expect(names, hasLength(97));
+    expect(names, hasLength(99));
     for (final name in names) {
       expect(() => parseFixture(name), returnsNormally, reason: name);
     }
@@ -229,6 +229,8 @@ void main() {
       'birthday-verify-422-format.json': ('validation_error', i, true, null, 'birthday', null, null),
       'broadcasting-auth-403.json': ('session_not_found', auth, false, null, null, null, null),
       'cancel-400-not-cancellable.json': ('not_processable', i, false, null, null, null, null),
+      'cancel-409-payment-in-progress.json': ('payment_in_progress', i, false, null, null, null, null),
+      'cancel-409-payment-partly-paid.json': ('payment_partly_paid', i, false, null, null, null, null),
       'client-session-422-sandbox.json': ('client_session_unavailable', i, false, null, 'request', null, null),
       'client-session-complete-402.json': ('failed', p, true, 'failed', null, null, null),
       'client-session-complete-422-expired.json': ('client_session_expired', i, true, null, 'request', null, null),
@@ -557,7 +559,7 @@ void main() {
 
   test('SY-01 uses the synced spec files', () {
     final manifest = File('$fixturesDir/spec.sha256').readAsLinesSync().where((line) => line.trim().isNotEmpty);
-    expect(manifest, hasLength(99));
+    expect(manifest, hasLength(101));
     for (final line in manifest) {
       final hash = line.substring(0, 64);
       final path = line.substring(66);
