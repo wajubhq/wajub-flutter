@@ -904,20 +904,29 @@ class _PayerOtpFormState extends State<PayerOtpForm> {
           Banner(message: strings.payerOtpSandboxHint(PayerOtpForm.sandboxCode), warning: true),
         ],
         SizedBox(height: theme.gapRow),
-        TextField(
-          key: const ValueKey('wajub-payer-otp-code'),
-          controller: _code,
-          enabled: !busy,
-          keyboardType: TextInputType.number,
-          autofillHints: const [AutofillHints.oneTimeCode],
-          inputFormatters: [
-            const AsciiDigitsFormatter(),
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(instructions.otpLength ?? PayerOtpInstructions.maxLength),
-          ],
-          style: TextStyle(fontSize: theme.inputFontSize, letterSpacing: 4),
-          decoration: InputDecoration(labelText: strings.payerOtp('codeLabel'), errorText: error, errorMaxLines: 3),
-        ),
+        if (instructions.otpLength case final length? when length <= PayerOtpInstructions.maxLength)
+          _CodeBoxes(
+            controller: _code,
+            length: length,
+            enabled: !busy,
+            label: strings.payerOtp('codeLabel'),
+            error: error,
+          )
+        else
+          TextField(
+            key: const ValueKey('wajub-payer-otp-code'),
+            controller: _code,
+            enabled: !busy,
+            keyboardType: TextInputType.number,
+            autofillHints: const [AutofillHints.oneTimeCode],
+            inputFormatters: [
+              const AsciiDigitsFormatter(),
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(instructions.otpLength ?? PayerOtpInstructions.maxLength),
+            ],
+            style: TextStyle(fontSize: theme.inputFontSize, letterSpacing: 4),
+            decoration: InputDecoration(labelText: strings.payerOtp('codeLabel'), errorText: error, errorMaxLines: 3),
+          ),
         if (attempts != null) ...[
           SizedBox(height: unit),
           Text(
@@ -942,5 +951,169 @@ class _PayerOtpFormState extends State<PayerOtpForm> {
         ),
       ],
     );
+  }
+}
+
+/// One box per digit of the code, over one field the payer types in: a digit
+/// fills the next box, backspace empties the last one, and a pasted or
+/// autofilled code fills them all. Nothing is sent until the payer confirms.
+class _CodeBoxes extends StatefulWidget {
+  const _CodeBoxes({
+    required this.controller,
+    required this.length,
+    required this.enabled,
+    required this.label,
+    this.error,
+  });
+
+  final TextEditingController controller;
+  final int length;
+  final bool enabled;
+  final String label;
+  final String? error;
+
+  @override
+  State<_CodeBoxes> createState() => _CodeBoxesState();
+}
+
+class _CodeBoxesState extends State<_CodeBoxes> {
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_caretAtEnd);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_caretAtEnd);
+    _focus.dispose();
+    super.dispose();
+  }
+
+  /// Digits are typed and erased in order: the caret stays after the last.
+  void _caretAtEnd() {
+    final controller = widget.controller;
+    final end = TextSelection.collapsed(offset: controller.text.length);
+    if (controller.selection.isValid && controller.selection != end) controller.selection = end;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = WajubTheme.of(context);
+    final colors = theme.colors;
+    final unit = theme.spacingUnit;
+    final error = widget.error;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.label,
+          style:
+              TextStyle(color: colors.textSecondary, fontSize: theme.fontSizeLabel, fontWeight: theme.fontWeightMedium),
+        ),
+        SizedBox(height: unit * 2),
+        Stack(
+          children: [
+            ListenableBuilder(
+              listenable: Listenable.merge([widget.controller, _focus]),
+              builder: (context, _) {
+                final code = widget.controller.text;
+                final current = code.length < widget.length ? code.length : widget.length - 1;
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (var i = 0; i < widget.length; i++) ...[
+                      if (i > 0) SizedBox(width: unit * 2),
+                      Flexible(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 52),
+                          child: Container(
+                            key: ValueKey('wajub-payer-otp-box-$i'),
+                            width: double.infinity,
+                            height: 52,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: widget.enabled ? colors.inputBackground : colors.disabledBackground,
+                              borderRadius: BorderRadius.circular(theme.radius),
+                              border: Border.all(
+                                color: error != null
+                                    ? colors.danger
+                                    : _focus.hasFocus && i == current
+                                        ? colors.focusRing
+                                        : colors.inputBorder,
+                                width: _focus.hasFocus && i == current ? 2 : 1,
+                              ),
+                            ),
+                            child: Text(
+                              i < code.length ? code[i] : '',
+                              style: TextStyle(
+                                color: colors.text,
+                                fontSize: theme.inputFontSize * 1.25,
+                                fontWeight: theme.fontWeightBold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+            // The field takes the taps, the keyboard, the paste menu and the
+            // code the phone suggests; the boxes show what it holds. It is
+            // drawn in transparent ink, not hidden: hidden, its paste menu
+            // would not show.
+            Positioned.fill(
+              child: TextSelectionTheme(
+                data: const TextSelectionThemeData(
+                  cursorColor: Colors.transparent,
+                  selectionColor: Colors.transparent,
+                  selectionHandleColor: Colors.transparent,
+                ),
+                child: TextField(
+                  key: const ValueKey('wajub-payer-otp-code'),
+                  controller: widget.controller,
+                  focusNode: _focus,
+                  enabled: widget.enabled,
+                  keyboardType: TextInputType.number,
+                  autofillHints: const [AutofillHints.oneTimeCode],
+                  showCursor: false,
+                  expands: true,
+                  maxLines: null,
+                  style: const TextStyle(color: Colors.transparent),
+                  inputFormatters: [
+                    const AsciiDigitsFormatter(),
+                    FilteringTextInputFormatter.digitsOnly,
+                    const _PastedCodeReplaces(),
+                    LengthLimitingTextInputFormatter(widget.length),
+                  ],
+                  decoration: const InputDecoration.collapsed(hintText: null),
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (error != null) ...[
+          SizedBox(height: unit * 2),
+          Text(error, style: TextStyle(color: colors.danger, fontSize: theme.fontSizeHint)),
+        ],
+      ],
+    );
+  }
+}
+
+/// A code pasted or autofilled over digits already typed replaces them.
+class _PastedCodeReplaces extends TextInputFormatter {
+  const _PastedCodeReplaces();
+
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final old = oldValue.text;
+    if (old.isEmpty || newValue.text.length - old.length < 2 || !newValue.text.startsWith(old)) return newValue;
+    final pasted = newValue.text.substring(old.length);
+    return TextEditingValue(text: pasted, selection: TextSelection.collapsed(offset: pasted.length));
   }
 }

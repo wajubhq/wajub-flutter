@@ -32,8 +32,8 @@ Everything that changed since 1.1.1.
   charged. `SessionChannel` and `ChannelOperator` gain `feeAmount` and `amountTotal`.
 - When the operator wants a code the payer generates in its menu before paying, the sheet shows how
   (`PAYER_OTP_REQUIRED`): the code to dial, with a Copy button (and a link to the dialer on Android), the exact
-  amount to enter and the steps, then takes the code (in sandbox, `123456`). A refused code can be entered again;
-  after too many refusals, the payer chooses another method.
+  amount to enter and the steps, then takes the code, one box per digit (in sandbox, `123456`). A refused code can
+  be entered again; after too many refusals, the payer chooses another method.
 - Cards: Stripe's card form (it needs `FlutterFragmentActivity` on Android), the provider's secure page or its own
   checkout in the system browser with "Continue payment" to reopen it, and a test card form in sandbox. One-tap
   wallets are offered too. Your app never handles card numbers in live.

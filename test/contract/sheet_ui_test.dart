@@ -648,6 +648,80 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('the payer code takes one box per digit: typing advances, backspace goes back, a paste fills them',
+      (tester) async {
+    Future<Sheet> codeScreen(int? length) async {
+      final session = fixtureBody('session-payer-otp-announced.json');
+      (((session['channels'] as List).first) as Map)['payer_otp']['otp_length'] = length;
+      final sheet = Sheet(FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+      }));
+      await sheet.open(tester);
+      await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '70000000');
+      await tester.pump();
+      await tapShown(tester, find.byKey(const ValueKey('wajub-pay-button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(sheet.controller.state, CheckoutState.payerOtpRequired);
+      return sheet;
+    }
+
+    final code = find.byKey(const ValueKey('wajub-payer-otp-code'));
+    List<String> boxes(int count) => [
+          for (var i = 0; i < count; i++)
+            tester
+                .widget<Text>(
+                    find.descendant(of: find.byKey(ValueKey('wajub-payer-otp-box-$i')), matching: find.byType(Text)))
+                .data!,
+        ];
+
+    final sheet = await codeScreen(6);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-box-5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-box-6')), findsNothing);
+    await tester.ensureVisible(code);
+    await tester.enterText(code, '١٢');
+    await tester.pump();
+    expect(boxes(6), ['1', '2', '', '', '', ''], reason: 'each digit in the next box, written 0-9');
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pump();
+    expect(boxes(6), ['1', '', '', '', '', ''], reason: 'backspace empties the last box');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      return switch (call.method) {
+        'Clipboard.getData' => {'text': '654 321'},
+        'Clipboard.hasStrings' => {'value': true},
+        _ => null,
+      };
+    });
+    await tester.longPress(code);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paste'));
+    await tester.pumpAndSettle();
+    expect(boxes(6), ['6', '5', '4', '3', '2', '1'], reason: 'a pasted code fills every box');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    await tester.enterText(code, '1654-321');
+    await tester.pump();
+    expect(boxes(6), ['6', '5', '4', '3', '2', '1'], reason: 'so does an autofilled one');
+    await tester.enterText(code, '6543219');
+    await tester.pump();
+    expect(boxes(6), ['6', '5', '4', '3', '2', '1'], reason: 'no seventh digit');
+    expect(sheet.controller.state, CheckoutState.payerOtpRequired, reason: 'no automatic submission');
+    expect(sheet.api.calls('/pay/process'), isEmpty);
+    sheet.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+
+    // Longer than 8 digits: one field.
+    final long = await codeScreen(10);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-box-0')), findsNothing);
+    await tester.enterText(code, '12345678901');
+    await tester.pump();
+    expect(find.text('1234567890'), findsOneWidget);
+    long.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('the payer code screen without steps shows the generic ones, and leaves for the form', (tester) async {
     final session = fixtureBody('session-payer-otp-announced.json');
     final otp = (((session['channels'] as List).first) as Map)['payer_otp'] as Map;
