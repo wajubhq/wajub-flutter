@@ -186,6 +186,12 @@ abstract final class ErrorCatalogue {
       'This payment method is not available for this merchant.',
       "Ce moyen de paiement n'est pas disponible pour ce marchand.",
     ),
+    'otp_attempts_exceeded': ErrorEntry(
+      _payment,
+      true,
+      'Your operator refused too many codes for this payment. Choose another payment method.',
+      'Votre opérateur a refusé trop de codes pour ce paiement. Choisissez un autre moyen de paiement.',
+    ),
     'country_restricted': ErrorEntry(
       _payment,
       false,

@@ -12,6 +12,7 @@ import '../mobile_money/mobile_money_data.dart';
 import '../mobile_money/mobile_money_rules.dart';
 import '../mobile_money/operator_choice.dart';
 import '../models/models.dart';
+import '../models/payer_otp.dart';
 import '../models/security_challenge.dart';
 import '../models/payment_result.dart';
 import '../models/wajub_error.dart';
@@ -51,6 +52,10 @@ enum CheckoutScreen {
   /// The sandbox 3-D Secure email code (`3DS_REQUIRED`, `VERIFYING`).
   threeDs,
 
+  /// The code the payer generates in the operator's menu
+  /// (`PAYER_OTP_REQUIRED`, `PROCESSING` while it is sent).
+  payerOtp,
+
   /// "Payment in progress" (`PENDING`, or `3DS_REQUIRED` in the browser).
   pending,
 
@@ -60,6 +65,15 @@ enum CheckoutScreen {
   /// `FAILED`, `EXPIRED`, `CANCELLED`: [CheckoutController.error], Try again
   /// when it is retryable.
   failed,
+}
+
+/// What the code screen says about the last code.
+enum PayerOtpNotice {
+  /// Not the length the operator wants (checked here, or by the API).
+  invalidLength,
+
+  /// The operator did not accept it.
+  refused,
 }
 
 /// The checkout's state machine: loads the session, offers
@@ -312,6 +326,63 @@ class CheckoutController extends ChangeNotifier {
   /// When the sandbox 3-D Secure code expires.
   DateTime? get threeDsDeadline => _threeDsDeadline;
   Timer? _threeDsTimer;
+
+  // ── The payer's own code ─────────────────────────────────────────────────
+
+  PayerOtpInstructions? _payerOtp;
+
+  /// How to get the code the operator asks for, on the code screen.
+  PayerOtpInstructions? get payerOtp => _payerOtp;
+  PayerOtpNotice? _payerOtpNotice;
+
+  /// What the code screen says about the last code, if anything.
+  PayerOtpNotice? get payerOtpNotice => _payerOtpNotice;
+  int? _payerOtpAttempts;
+
+  /// The codes the operator may still refuse, after a refusal that says.
+  int? get payerOtpAttemptsRemaining => _payerOtpAttempts;
+  var _payerOtpRound = 0;
+
+  /// Bumped each time the code screen opens: its field starts empty.
+  int get payerOtpRound => _payerOtpRound;
+
+  /// The charge the code goes with: its channel and its data.
+  (String, Map<String, dynamic>)? _payerOtpCharge;
+
+  /// The last charge sent, without a code.
+  (String, Map<String, dynamic>)? _lastCharge;
+  var _payerOtpSent = false;
+
+  /// A code went with the attempt under way.
+  bool get payerOtpSent => _payerOtpSent;
+
+  /// The code the selected operator asks for before the charge, when its
+  /// channel says so (never an aggregate's member).
+  PayerOtpInstructions? get announcedPayerOtp {
+    if (_method?.family != MethodFamily.mobileMoney) return null;
+    final choice = _choices.where((c) => c.id == _selectedId).firstOrNull;
+    return choice == null || choice.viaAggregate ? null : choice.payerOtp;
+  }
+
+  // ── What the payer pays ──────────────────────────────────────────────────
+
+  /// The total of the last charge Wajub answered, until the payer is back on
+  /// a form.
+  double? _chargedTotal;
+
+  /// What the payer pays, fee included, as the sheet shows it: what the last
+  /// charge took, else the selected operator's or channel's total, else the
+  /// payment's.
+  double get amountToPay => _chargedTotal ?? _selectedTotal ?? _session?.transaction.payableAmount ?? 0;
+
+  double? get _selectedTotal {
+    final method = _method;
+    if (method == null) return null;
+    if (method.family != MethodFamily.mobileMoney) return method.channel.amountTotal;
+    final choice = _choices.where((c) => c.id == _selectedId).firstOrNull;
+    if (choice != null) return choice.amountTotal;
+    return method.channels.length == 1 ? method.channels.single.amountTotal : null;
+  }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -824,6 +895,14 @@ class CheckoutController extends ChangeNotifier {
       sandbox: _sandbox,
     );
     _approvalPhone = request['phone'] as String?;
+    final announced = choice.viaAggregate ? null : choice.payerOtp;
+    if (announced != null) {
+      // The operator wants a code generated beforehand: it goes with the
+      // first charge.
+      if (_inFlight || cancelling) return;
+      _showPayerOtp(announced, (choice.channelSlug, request));
+      return;
+    }
     await _process(choice.channelSlug, request, MethodFamily.mobileMoney);
   }
 
@@ -914,19 +993,26 @@ class CheckoutController extends ChangeNotifier {
     );
   }
 
-  Future<void> _process(String channel, Map<String, dynamic> data, MethodFamily family) async {
+  Future<void> _process(
+    String channel,
+    Map<String, dynamic> data,
+    MethodFamily family, {
+    CheckoutScreen screen = CheckoutScreen.form,
+  }) async {
     if (_inFlight || settled || cancelling) return;
     if (!_sandbox && carriesCardData(data)) {
       // The API refuses raw card data in live; never send it.
       _fail(WajubError.of('raw_card_data_not_accepted', language: language));
       return;
     }
-    await _sendProcess(_beginAttempt(), channel, data, family);
+    await _sendProcess(_beginAttempt(screen: screen), channel, data, family);
   }
 
-  /// A press of Pay: a new attempt, in flight until its answer.
-  int _beginAttempt() {
+  /// A press of Pay (or of "Confirm payment" on the code screen, [screen]):
+  /// a new attempt, in flight until its answer.
+  int _beginAttempt({CheckoutScreen screen = CheckoutScreen.form}) {
     final attempt = ++_attempt;
+    _payerOtpSent = screen == CheckoutScreen.payerOtp;
     _submitted = true;
     _attemptClock
       ..reset()
@@ -938,7 +1024,7 @@ class CheckoutController extends ChangeNotifier {
     _continueUrl = null;
     _clearMessages();
     _setBusy(true);
-    _enter(CheckoutState.processing, CheckoutScreen.form);
+    _enter(CheckoutState.processing, screen);
     _call(() => onSubmit?.call());
     return attempt;
   }
@@ -947,6 +1033,7 @@ class CheckoutController extends ChangeNotifier {
     // One key per press of Pay, reused by the client's own retries — and by
     // the next press when this one got no answer.
     final key = _unansweredKey ?? uuidV4();
+    _lastCharge = (channel, Map.of(data)..remove('otp'));
     final body = {
       ...data,
       if (options.returnUrl != null) 'return_url': options.returnUrl,
@@ -1030,12 +1117,19 @@ class CheckoutController extends ChangeNotifier {
 
   /// A 2xx of `/pay/process` or `/pay/client-session`.
   void _onAnswer(RawProcessResponse raw, MethodFamily family, String channel) {
+    final payerOtp = raw.action == 'payer_otp' ? raw.payerOtp : null;
+    final charge = _lastCharge;
+    if (payerOtp != null && charge != null && charge.$1 == channel) {
+      _onPayerOtpAsked(raw, payerOtp, charge);
+      return;
+    }
     _paymentStarted(family, channel);
     _acceptedUndecided = true;
     _unansweredKey = null;
     _unansweredPath = null;
     final transaction = raw.transaction;
     if (transaction != null) _transaction = _adopt(transaction);
+    _chargedTotal = transaction?.amountTotal ?? _chargedTotal;
     if (raw.httpStatus == 202 || const {'processing', 'partial'}.contains(transaction?.status)) {
       _seenProcessing = true;
     }
@@ -1188,10 +1282,14 @@ class CheckoutController extends ChangeNotifier {
       case 429:
         _retryAt = clock.now().add(Duration(seconds: error.retryAfterSeconds ?? 60));
         _fail(error);
+      case 402 when error.code == _payerOtpExhausted:
+        _backToFormWith(error);
       default:
         _fail(error);
     }
   }
+
+  static const _payerOtpExhausted = 'otp_attempts_exceeded';
 
   /// A definitive refusal (a 402, a step failed for good, a `pending` read):
   /// the payment is `pending` again, so "Cancel payment" is offered again.
@@ -1517,6 +1615,127 @@ class CheckoutController extends ChangeNotifier {
     }
   }
 
+  // ── The payer's own code ────────────────────────────────────
+
+  /// The code screen, for [charge]: its field empty, [notice] about the last
+  /// code.
+  void _showPayerOtp(
+    PayerOtpInstructions instructions,
+    (String, Map<String, dynamic>) charge, {
+    PayerOtpNotice? notice,
+    int? attempts,
+  }) {
+    _payerOtp = instructions;
+    _payerOtpCharge = charge;
+    _payerOtpNotice = notice;
+    _payerOtpAttempts = attempts;
+    _payerOtpRound++;
+    _payerOtpSent = false;
+    _clearMessages();
+    _enter(CheckoutState.payerOtpRequired, CheckoutScreen.payerOtp);
+  }
+
+  /// The charge asks for the payer's code: nothing was charged, the payment
+  /// is still payable and no attempt started.
+  void _onPayerOtpAsked(
+    RawProcessResponse raw,
+    PayerOtpInstructions instructions,
+    (String, Map<String, dynamic>) charge,
+  ) {
+    _unansweredKey = null;
+    _unansweredPath = null;
+    final transaction = raw.transaction;
+    if (transaction != null) _transaction = _adopt(transaction);
+    final (notice, attempts) = switch (instructions.reason) {
+      'invalid' => (PayerOtpNotice.invalidLength, null),
+      'refused' => (PayerOtpNotice.refused, instructions.attemptsRemaining),
+      _ => (null, null),
+    };
+    _showPayerOtp(instructions, charge, notice: notice, attempts: attempts);
+  }
+
+  /// "Confirm payment": the charge again, with [code], as a new press of Pay.
+  /// A code that is not the length the operator wants is not sent.
+  Future<void> submitPayerOtp(String code) async {
+    final instructions = _payerOtp;
+    final charge = _payerOtpCharge;
+    if (instructions == null ||
+        charge == null ||
+        _screen != CheckoutScreen.payerOtp ||
+        _busy ||
+        _inFlight ||
+        settled ||
+        cancelling) {
+      return;
+    }
+    code = asciiDigits(code.trim());
+    if (!instructions.accepts(code)) {
+      _payerOtpNotice = PayerOtpNotice.invalidLength;
+      _payerOtpAttempts = null;
+      notifyListeners();
+      return;
+    }
+    _payerOtpNotice = null;
+    _payerOtpAttempts = null;
+    _unansweredKey = null;
+    await _process(charge.$1, {...charge.$2, 'otp': code}, MethodFamily.mobileMoney, screen: CheckoutScreen.payerOtp);
+  }
+
+  /// "Use another payment method": back to the Mobile Money form.
+  void leavePayerOtp() {
+    if (_screen != CheckoutScreen.payerOtp || _busy || settled) return;
+    _payerOtp = null;
+    _payerOtpCharge = null;
+    _payerOtpNotice = null;
+    _payerOtpAttempts = null;
+    _clearMessages();
+    _enter(CheckoutState.collectingDetails, CheckoutScreen.form);
+  }
+
+  /// Opens the phone's dialer on the code to dial.
+  Future<void> dialPayerOtpCode() async {
+    final url = _payerOtp?.dialUrl;
+    if (url == null || settled) return;
+    try {
+      await _openUrl(url);
+    } catch (_) {
+      // Nothing to dial with: the code stays on screen to copy.
+    }
+  }
+
+  /// The operator refused the code after taking it: the code screen again,
+  /// for a new code.
+  void _payerOtpRefusedLater() {
+    _attempt++;
+    _pendingAgain();
+    _attemptStarted = false;
+    _paymentStartedFired = false;
+    _seenProcessing = false;
+    _inFlight = false;
+    _busy = false;
+    _showPayerOtp(_payerOtp!, _payerOtpCharge!, notice: PayerOtpNotice.refused);
+  }
+
+  /// Back to the form with [error] above it: this payment method can no
+  /// longer take the payment, another one can.
+  void _backToFormWith(WajubError error) {
+    _attempt++;
+    _watcher?.stop();
+    _pendingAgain();
+    _attemptStarted = false;
+    _paymentStartedFired = false;
+    _seenProcessing = false;
+    _payerOtpSent = false;
+    _payerOtp = null;
+    _payerOtpCharge = null;
+    _inFlight = false;
+    _busy = false;
+    _fieldErrors = const {};
+    _banner = error.message;
+    _enter(CheckoutState.collectingDetails, CheckoutScreen.form);
+    _call(() => _callbacks.onError?.call(error));
+  }
+
   // ── Watching ────────────────────────────────────────────────
 
   void _watch({bool pollNow = false}) {
@@ -1586,6 +1805,17 @@ class CheckoutController extends ChangeNotifier {
     _unansweredPath = null;
     // An outcome, or a refusal: the attempt is decided (the cap is not).
     if (decision.verdict != WatchVerdict.capped) _acceptedUndecided = false;
+    if (_payerOtpSent && _payerOtp != null && decision.verdict == WatchVerdict.failed && status == 'pending') {
+      // The operator refused the code once it had it.
+      if (code == 'invalid_otp') {
+        _payerOtpRefusedLater();
+        return;
+      }
+      if (code == _payerOtpExhausted) {
+        _backToFormWith(decision.error!);
+        return;
+      }
+    }
     switch (decision.verdict) {
       case WatchVerdict.success:
         _succeed(_transaction ?? _session!.transaction, method: _family);
@@ -1724,6 +1954,7 @@ class CheckoutController extends ChangeNotifier {
     _attemptStarted = false;
     _paymentStartedFired = false;
     _seenProcessing = false;
+    _payerOtpSent = false;
     _clientSessionId = null;
     _continueUrl = null;
     _unansweredKey = null;
@@ -2016,6 +2247,8 @@ class CheckoutController extends ChangeNotifier {
 
   void _enter(CheckoutState state, CheckoutScreen screen, {String? method}) {
     _screen = screen;
+    // On a form, the payer's selection prices the payment again.
+    if (state == CheckoutState.initiated || state == CheckoutState.collectingDetails) _chargedTotal = null;
     if (_state != state) {
       _state = state;
       final event = StateChangeEvent(state: state, method: method ?? _family);

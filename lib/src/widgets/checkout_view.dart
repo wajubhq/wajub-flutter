@@ -224,6 +224,8 @@ class _WajubCheckoutViewState extends State<WajubCheckoutView> with WidgetsBindi
         CheckoutScreen.ussd => _Waiting(controller: controller, strings: strings, ussd: true),
         CheckoutScreen.step => StepForm(controller: controller, strings: strings),
         CheckoutScreen.threeDs => ThreeDsForm(controller: controller, strings: strings),
+        CheckoutScreen.payerOtp =>
+          PayerOtpForm(key: ValueKey(controller.payerOtpRound), controller: controller, strings: strings),
         CheckoutScreen.pending => _Pending(controller: controller, strings: strings),
         CheckoutScreen.success => _Success(controller: controller, strings: strings),
         CheckoutScreen.failed => _Failure(controller: controller, strings: strings),
@@ -301,7 +303,7 @@ class _Summary extends StatelessWidget {
                 Text(strings.amountToPay, style: TextStyle(color: colors.textSecondary, fontSize: theme.fontSizeLabel)),
                 SizedBox(height: theme.spacingUnit),
                 Text(
-                  formatAmount(transaction.payableAmount, transaction.currency, controller.language),
+                  formatAmount(controller.amountToPay, transaction.currency, controller.language),
                   key: const ValueKey('wajub-amount'),
                   style: TextStyle(
                     color: colors.text,
@@ -641,8 +643,14 @@ class _Waiting extends StatelessWidget {
       icon: ussd ? Icons.dialpad : Icons.phone_iphone,
       color: colors.primary,
       background: colors.selectedBackground,
-      title: ussd ? strings.ussdTitle : strings.approvalTitle,
-      message: ussd ? null : (phone != null ? strings.approvalSentTo(phone) : null),
+      // After the payer's own code, the operator approves: nothing to do on
+      // the phone.
+      title: ussd
+          ? strings.ussdTitle
+          : controller.payerOtpSent
+              ? strings.payerOtp('approval')
+              : strings.approvalTitle,
+      message: ussd || controller.payerOtpSent ? null : (phone != null ? strings.approvalSentTo(phone) : null),
       children: [
         if (instruction != null) ...[
           Container(

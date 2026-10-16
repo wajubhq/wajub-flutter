@@ -19,7 +19,11 @@ enum CheckoutState {
   success('SUCCESS'),
   failed('FAILED'),
   expired('EXPIRED'),
-  cancelled('CANCELLED');
+  cancelled('CANCELLED'),
+
+  /// The payer's operator asks for a code the payer generates in its menu,
+  /// for the exact amount, before the payment goes through.
+  payerOtpRequired('PAYER_OTP_REQUIRED');
 
   const CheckoutState(this.wireName);
 

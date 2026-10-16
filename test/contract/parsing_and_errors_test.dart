@@ -52,7 +52,7 @@ Map<String, dynamic> withUnknownKeys(Map<String, dynamic> body) {
 void main() {
   test('PR-01 parses every fixture', () {
     final names = fixtureNames();
-    expect(names, hasLength(99));
+    expect(names, hasLength(108));
     for (final name in names) {
       expect(() => parseFixture(name), returnsNormally, reason: name);
     }
@@ -248,6 +248,15 @@ void main() {
         p,
         true,
         'insufficient_funds',
+        null,
+        null,
+        null
+      ),
+      'process-402-payer-otp-attempts-exceeded.json': (
+        'otp_attempts_exceeded',
+        p,
+        true,
+        'otp_attempts_exceeded',
         null,
         null,
         null
@@ -592,7 +601,7 @@ void main() {
 
   test('SY-01 uses the synced spec files', () {
     final manifest = File('$fixturesDir/spec.sha256').readAsLinesSync().where((line) => line.trim().isNotEmpty);
-    expect(manifest, hasLength(101));
+    expect(manifest, hasLength(110));
     for (final line in manifest) {
       final hash = line.substring(0, 64);
       final path = line.substring(66);

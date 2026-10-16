@@ -9,7 +9,7 @@ Everything that changed since 1.1.1.
   `PaymentSuccess`), `CheckoutProcessing`, `CheckoutFailed` or `CheckoutCancelled` (with its reason:
   `payer_cancelled`, `dismissed`, `host_gone`). Presenting a second sheet while one is open fails with
   `sheet_already_presented`; the next sheet can open as soon as the last one has closed, from `onComplete` too.
-- `PresentOptions.callbacks` reports, in order, `onReady`, `onStateChange` (with the 17 `CheckoutState` values),
+- `PresentOptions.callbacks` reports, in order, `onReady`, `onStateChange` (with the 18 `CheckoutState` values),
   `onLoadError`, `onPaymentStarted`, `onRedirect`, `onSuccess`, `onError`, `onCancel` and `onComplete`. A callback
   that throws does not break the sheet.
 - Options: `locale` (French or English), `appearance`, `loader` (a skeleton or a spinner), `readyTimeout` (past
@@ -27,6 +27,13 @@ Everything that changed since 1.1.1.
   with 00 is read like one written with +, and another country's number is refused. A sandbox session accepts the
   sandbox test numbers with the operator they test. After Pay, "Approve the payment on your phone" with the
   operator's instructions, or a USSD code to dial.
+- When what the payer pays depends on the method or the operator, the amount on Pay, in the summary and on the
+  approval screen is the one chosen, and follows the number as it is typed; `PaymentSuccess.amount` is what was
+  charged.
+- When the operator wants a code the payer generates in its menu before paying, the sheet shows how
+  (`PAYER_OTP_REQUIRED`): the code to dial, with a Copy button (and a link to the dialer on Android), the exact
+  amount to enter and the steps, then takes the code (in sandbox, `123456`). A refused code can be entered again;
+  after too many refusals, the payer chooses another method.
 - Cards: Stripe's card form (it needs `FlutterFragmentActivity` on Android), the provider's secure page or its own
   checkout in the system browser with "Continue payment" to reopen it, and a test card form in sandbox. One-tap
   wallets are offered too. Your app never handles card numbers in live.

@@ -61,6 +61,35 @@ class SheetStrings {
   String paidTo(String merchant) => _fill('paidTo', {'merchant': merchant});
   String reference(String reference) => _fill('reference', {'reference': reference});
 
+  /// The code screen's own words: `title`, `description`, `dial`, `copy`,
+  /// `copied`, `amount`, `stepsTitle`, `codeLabel`, `submit`, `changeMethod`,
+  /// `approval`, `refused`.
+  String payerOtp(String key) => _texts['payerOtp.$key']!;
+
+  /// The three steps shown when the operator's own are not known.
+  List<String> payerOtpGenericSteps(String amount) => [
+        _texts['payerOtp.generic1']!,
+        _fill('payerOtp.generic2', {'amount': amount}),
+        _texts['payerOtp.generic3']!,
+      ];
+
+  String payerOtpSandboxHint(String code) => _fill('payerOtp.sandboxHint', {'code': code});
+
+  /// The Mobile Money form's line for a channel whose operator wants a code.
+  String payerOtpFormHint(String? ussdCode) =>
+      ussdCode == null ? _texts['payerOtp.formHintGeneric']! : _fill('payerOtp.formHint', {'ussd_code': ussdCode});
+
+  String payerOtpAttempts(int count) => switch (count) {
+        <= 0 => _texts['payerOtp.attempts0']!,
+        1 => _texts['payerOtp.attempts1']!,
+        _ => _fill('payerOtp.attemptsN', {'count': '$count'}),
+      };
+
+  /// The code's length: exactly [length] digits, else 4 to 8.
+  String payerOtpLength(int? length) => length == null
+      ? _fill('payerOtp.lengthRange', {'min': '4', 'max': '8'})
+      : _fill('payerOtp.length', {'length': '$length'});
+
   /// The title of a confirmation step: `otp`, `pin`, `phone`, `birthday`,
   /// `address`.
   String stepTitle(String step) => _texts['step.$step']!;
@@ -146,6 +175,32 @@ class SheetStrings {
     'field.expiry_month': 'MM',
     'field.expiry_year': 'YY',
     'field.cvv': 'CVV',
+    'payerOtp.title': 'Generate your payment code',
+    'payerOtp.description':
+        'Before you pay, your operator asks for a code you generate yourself from its menu, for the '
+            'exact amount of the payment.',
+    'payerOtp.dial': 'Code to dial',
+    'payerOtp.copy': 'Copy',
+    'payerOtp.copied': 'Copied',
+    'payerOtp.amount': 'Exact amount to enter',
+    'payerOtp.stepsTitle': 'How to get your code',
+    'payerOtp.generic1': "Open your operator's Mobile Money menu (USSD code or app).",
+    'payerOtp.generic2': 'Generate a payment code for the exact amount: {amount}.',
+    'payerOtp.generic3': 'Enter the code you received below.',
+    'payerOtp.codeLabel': 'Payment code',
+    'payerOtp.submit': 'Confirm payment',
+    'payerOtp.changeMethod': 'Use another payment method',
+    'payerOtp.sandboxHint': 'Test mode: enter the code {code}. Any other code is refused.',
+    'payerOtp.approval': 'Code received. Your operator is processing the payment, this can take a moment.',
+    'payerOtp.formHint': 'For this payment, you will generate a code by dialing {ussd_code}: the next step guides you.',
+    'payerOtp.formHintGeneric':
+        "For this payment, you will generate a code from your operator's menu: the next step guides you.",
+    'payerOtp.attempts0': 'No tries left.',
+    'payerOtp.attempts1': '1 try left.',
+    'payerOtp.attemptsN': '{count} tries left.',
+    'payerOtp.length': 'The code must have {length} digits.',
+    'payerOtp.lengthRange': 'The code must have between {min} and {max} digits.',
+    'payerOtp.refused': 'Your operator did not accept this code. Generate a new one and try again.',
   });
 
   static const fr = SheetStrings._('fr', {
@@ -223,6 +278,32 @@ class SheetStrings {
     'field.expiry_month': 'MM',
     'field.expiry_year': 'AA',
     'field.cvv': 'CVV',
+    'payerOtp.title': 'Générez votre code de paiement',
+    'payerOtp.description': 'Avant de payer, votre opérateur demande un code que vous générez vous-même depuis son '
+        'menu, pour le montant exact du paiement.',
+    'payerOtp.dial': 'Code à composer',
+    'payerOtp.copy': 'Copier',
+    'payerOtp.copied': 'Copié',
+    'payerOtp.amount': 'Montant exact à saisir',
+    'payerOtp.stepsTitle': 'Comment obtenir votre code',
+    'payerOtp.generic1': 'Ouvrez le menu Mobile Money de votre opérateur (code USSD ou application).',
+    'payerOtp.generic2': 'Générez un code de paiement pour le montant exact : {amount}.',
+    'payerOtp.generic3': 'Saisissez ci-dessous le code que vous avez reçu.',
+    'payerOtp.codeLabel': 'Code de paiement',
+    'payerOtp.submit': 'Valider le paiement',
+    'payerOtp.changeMethod': 'Changer de moyen de paiement',
+    'payerOtp.sandboxHint': 'Mode test : saisissez le code {code}. Tout autre code est refusé.',
+    'payerOtp.approval': 'Code reçu. Votre opérateur traite le paiement, cela peut prendre quelques instants.',
+    'payerOtp.formHint':
+        "Pour ce paiement, vous générerez un code en composant {ussd_code} : l'étape suivante vous guide.",
+    'payerOtp.formHintGeneric':
+        "Pour ce paiement, vous générerez un code depuis le menu de votre opérateur : l'étape suivante vous guide.",
+    'payerOtp.attempts0': 'Plus aucun essai possible.',
+    'payerOtp.attempts1': 'Il vous reste 1 essai.',
+    'payerOtp.attemptsN': 'Il vous reste {count} essais.',
+    'payerOtp.length': 'Le code doit comporter {length} chiffres.',
+    'payerOtp.lengthRange': 'Le code doit comporter entre {min} et {max} chiffres.',
+    'payerOtp.refused': "Votre opérateur n'a pas accepté ce code. Générez-en un nouveau et réessayez.",
   });
 
   /// `fr`, `fr-CM`, `fr_CI` read French; anything else, or nothing, English.

@@ -1,4 +1,5 @@
 import '../models/models.dart';
+import '../models/payer_otp.dart';
 import 'mobile_money_data.dart';
 
 /// One operator the payer can pick in the Mobile Money form: a member of an
@@ -16,6 +17,8 @@ class OperatorChoice {
     this.viaAggregate = false,
     required this.badge,
     this.operatorIndependent = false,
+    this.amountTotal,
+    this.payerOtp,
   });
 
   /// `mtn`, `wave`, `eu`: the aggregate member's `operator`, or the
@@ -52,6 +55,14 @@ class OperatorChoice {
 
   /// Takes any number: never an `operator_mismatch`.
   final bool operatorIndependent;
+
+  /// What the payer pays with it: the member's own total, else its
+  /// channel's; null when the payment's total applies.
+  final double? amountTotal;
+
+  /// The code its channel asks the payer to generate before the charge
+  /// (never an aggregate's member).
+  final PayerOtpInstructions? payerOtp;
 }
 
 /// A channel the Mobile Money form pays through (`mobile_money`, `mobile`).
@@ -107,6 +118,8 @@ List<OperatorChoice> operatorChoices(
     required String channelSlug,
     required String configSlug,
     required bool viaAggregate,
+    double? amountTotal,
+    PayerOtpInstructions? payerOtp,
   }) {
     if (id.isEmpty || choices.any((c) => c.id == id)) return;
     final brand = data.operators[id]?.brand;
@@ -121,6 +134,8 @@ List<OperatorChoice> operatorChoices(
       viaAggregate: viaAggregate,
       badge: brand ?? data.fallbackBrand,
       operatorIndependent: data.isOperatorIndependent(id),
+      amountTotal: amountTotal,
+      payerOtp: payerOtp,
     ));
   }
 
@@ -136,6 +151,7 @@ List<OperatorChoice> operatorChoices(
           channelSlug: channel.slug,
           configSlug: member.slug,
           viaAggregate: true,
+          amountTotal: member.amountTotal ?? channel.amountTotal,
         );
       }
     } else {
@@ -147,6 +163,8 @@ List<OperatorChoice> operatorChoices(
         channelSlug: channel.slug,
         configSlug: channel.slug,
         viaAggregate: false,
+        amountTotal: channel.amountTotal,
+        payerOtp: channel.payerOtp,
       );
     }
   }

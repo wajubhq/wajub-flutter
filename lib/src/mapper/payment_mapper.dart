@@ -1,5 +1,6 @@
 import '../models/json_read.dart';
 import '../models/models.dart';
+import '../models/payer_otp.dart';
 import '../models/sdk_flavor.dart';
 import '../models/payment_result.dart';
 import '../models/step_keys.dart';
@@ -24,6 +25,7 @@ class RawProcessResponse {
     this.threeDsTimeout,
     this.stepIds = const {},
     this.stepHints = const {},
+    this.payerOtp,
   });
 
   final int code;
@@ -55,6 +57,10 @@ class RawProcessResponse {
   /// `otp_masked_contact`, `pin_instruction`… by step.
   final Map<PaymentStepKind, String> stepHints;
 
+  /// `action: "payer_otp"`: the code the payer generates in the operator's
+  /// menu, why it is asked, the tries left.
+  final PayerOtpInstructions? payerOtp;
+
   factory RawProcessResponse.fromJson(Map<String, dynamic> json, {int? httpStatus}) => RawProcessResponse(
         code: readInt(json['code']) ?? httpStatus ?? 0,
         status: readString(json['status']) ?? '',
@@ -79,6 +85,7 @@ class RawProcessResponse {
           for (final kind in PaymentStepKind.values)
             if (readText(json[kind.hintKey]) != null) kind: readText(json[kind.hintKey])!,
         },
+        payerOtp: PayerOtpInstructions.fromJson(json['payer_otp']),
       );
 }
 

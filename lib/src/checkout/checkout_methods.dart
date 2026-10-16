@@ -158,7 +158,10 @@ bool _mobileMoneyAvailable(SessionChannel channel, SdkConfig? config) {
   return members.isEmpty || members.any((entry) => entry.available);
 }
 
+/// [amount] is the payment's total; a channel with a total of its own (its
+/// fee included) is compared with that one.
 MethodLimit? _limit(SessionChannel channel, double amount, String currency) {
+  amount = channel.amountTotal ?? amount;
   final min = channel.minAmount;
   final max = channel.maxAmount;
   if (min != null && amount < min) return MethodLimit(minimum: true, amount: min, currency: currency);

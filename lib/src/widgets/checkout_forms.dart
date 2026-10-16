@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:clock/clock.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
@@ -13,6 +15,7 @@ import '../errors/error_catalogue.dart';
 import '../mobile_money/mobile_money_data.dart';
 import '../mobile_money/operator_choice.dart';
 import '../mobile_money/operator_logo.dart';
+import '../models/payer_otp.dart';
 import '../models/payment_result.dart';
 import 'network_logo.dart';
 import 'sheet_strings.dart';
@@ -127,10 +130,8 @@ class _PayButton extends StatelessWidget {
   }
 }
 
-String _amount(CheckoutController controller) {
-  final transaction = controller.sessionData!.transaction;
-  return formatAmount(transaction.payableAmount, transaction.currency, controller.language);
-}
+String _amount(CheckoutController controller) =>
+    formatAmount(controller.amountToPay, controller.sessionData!.transaction.currency, controller.language);
 
 /// Country, operator and number: the number preselects its operator until
 /// the payer picks one, and is formatted as it is typed.
@@ -255,6 +256,14 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
             ),
           ),
         SizedBox(height: theme.gapRow),
+        if (controller.announcedPayerOtp case final announced?) ...[
+          Text(
+            strings.payerOtpFormHint(announced.ussdCode),
+            key: const ValueKey('wajub-payer-otp-hint'),
+            style: TextStyle(color: colors.textSecondary, fontSize: theme.fontSizeLabel),
+          ),
+          SizedBox(height: theme.gapRow),
+        ],
         _PayButton(
           controller: controller,
           label: strings.pay(_amount(controller)),
@@ -732,6 +741,204 @@ class _ThreeDsFormState extends State<ThreeDsForm> {
           key: const ValueKey('wajub-resend'),
           onPressed: busy || wait > 0 ? null : () => unawaited(controller.resend()),
           child: Text(wait > 0 ? strings.resendIn(wait) : strings.resend),
+        ),
+      ],
+    );
+  }
+}
+
+/// The code the payer generates in the operator's menu, for the exact
+/// amount, before the payment goes through.
+class PayerOtpForm extends StatefulWidget {
+  const PayerOtpForm({super.key, required this.controller, required this.strings});
+
+  final CheckoutController controller;
+  final SheetStrings strings;
+
+  /// The code that pays in test mode.
+  static const sandboxCode = '123456';
+
+  @override
+  State<PayerOtpForm> createState() => _PayerOtpFormState();
+}
+
+class _PayerOtpFormState extends State<PayerOtpForm> {
+  final _code = TextEditingController();
+  late final _dial = TapGestureRecognizer()..onTap = _dialCode;
+  Timer? _copiedTimer;
+  var _copied = false;
+
+  /// Android dials a code with `*` and `#` from a link; iOS does not.
+  bool get _dials => defaultTargetPlatform == TargetPlatform.android;
+
+  void _dialCode() => unawaited(widget.controller.dialPayerOtpCode());
+
+  Future<void> _copy(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    _copiedTimer?.cancel();
+    _copiedTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _copiedTimer?.cancel();
+    _dial.dispose();
+    _code.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final strings = widget.strings;
+    final theme = WajubTheme.of(context);
+    final colors = theme.colors;
+    final unit = theme.spacingUnit;
+    final busy = controller.busy;
+    final instructions = controller.payerOtp!;
+    final ussd = instructions.ussdCode;
+    final steps = instructions.stepsFor(controller.language);
+    final attempts = controller.payerOtpAttemptsRemaining;
+    final error = switch (controller.payerOtpNotice) {
+      PayerOtpNotice.invalidLength => strings.payerOtpLength(instructions.otpLength),
+      PayerOtpNotice.refused => strings.payerOtp('refused'),
+      null => null,
+    };
+    final label =
+        TextStyle(color: colors.textSecondary, fontSize: theme.fontSizeHint, fontWeight: theme.fontWeightMedium);
+    final body = TextStyle(color: colors.text, fontSize: theme.fontSizeLabel);
+    final strong = body.copyWith(fontWeight: theme.fontWeightBold);
+    final link = strong.copyWith(color: colors.link, decoration: TextDecoration.underline);
+
+    Widget block(String title, Widget child) => Container(
+          padding: EdgeInsets.all(unit * 3),
+          decoration: BoxDecoration(color: colors.surfaceMuted, borderRadius: BorderRadius.circular(theme.radius)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [Text(title, style: label), SizedBox(height: unit), child],
+          ),
+        );
+
+    InlineSpan part((PayerOtpPart, String) part) => switch (part.$1) {
+          PayerOtpPart.ussdCode =>
+            TextSpan(text: part.$2, style: _dials ? link : strong, recognizer: _dials ? _dial : null),
+          PayerOtpPart.amount => TextSpan(text: part.$2, style: strong),
+          PayerOtpPart.text => TextSpan(text: part.$2),
+        };
+
+    final lines = steps.isEmpty
+        ? [
+            for (final text in strings.payerOtpGenericSteps('${instructions.amount} ${instructions.currency}'))
+              TextSpan(text: text),
+          ]
+        : [
+            for (final step in steps) TextSpan(children: [for (final p in instructions.parts(step)) part(p)]),
+          ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          strings.payerOtp('title'),
+          style: TextStyle(color: colors.text, fontSize: theme.fontSizeBase * 1.125, fontWeight: theme.fontWeightBold),
+        ),
+        SizedBox(height: unit * 2),
+        Text(strings.payerOtp('description'),
+            style: TextStyle(color: colors.textSecondary, fontSize: theme.fontSizeLabel)),
+        SizedBox(height: theme.gapRow),
+        if (ussd != null) ...[
+          block(
+            strings.payerOtp('dial'),
+            Row(
+              children: [
+                Expanded(
+                  child: _dials
+                      ? InkWell(
+                          key: const ValueKey('wajub-payer-otp-dial'),
+                          onTap: _dialCode,
+                          child: Text(ussd, style: link.copyWith(fontSize: theme.fontSizeBase * 1.25)),
+                        )
+                      : Text(ussd,
+                          key: const ValueKey('wajub-payer-otp-ussd'),
+                          style: strong.copyWith(fontSize: theme.fontSizeBase * 1.25)),
+                ),
+                TextButton.icon(
+                  key: const ValueKey('wajub-payer-otp-copy'),
+                  onPressed: () => unawaited(_copy(ussd)),
+                  icon: Icon(_copied ? Icons.check : Icons.copy, size: 16),
+                  label: Text(strings.payerOtp(_copied ? 'copied' : 'copy')),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: unit * 2),
+        ],
+        block(
+          strings.payerOtp('amount'),
+          Text(
+            '${instructions.amount} ${instructions.currency}',
+            key: const ValueKey('wajub-payer-otp-amount'),
+            style: strong.copyWith(fontSize: theme.fontSizeBase * 1.25),
+          ),
+        ),
+        SizedBox(height: theme.gapRow),
+        Text(strings.payerOtp('stepsTitle'), style: label),
+        SizedBox(height: unit),
+        for (final (index, line) in lines.indexed) ...[
+          Row(
+            key: ValueKey('wajub-payer-otp-step-$index'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: unit * 6, child: Text('${index + 1}.', style: body)),
+              Expanded(child: Text.rich(line, style: body)),
+            ],
+          ),
+          SizedBox(height: unit),
+        ],
+        if (controller.sandbox) ...[
+          SizedBox(height: unit),
+          Banner(message: strings.payerOtpSandboxHint(PayerOtpForm.sandboxCode), warning: true),
+        ],
+        SizedBox(height: theme.gapRow),
+        TextField(
+          key: const ValueKey('wajub-payer-otp-code'),
+          controller: _code,
+          enabled: !busy,
+          keyboardType: TextInputType.number,
+          autofillHints: const [AutofillHints.oneTimeCode],
+          inputFormatters: [
+            const AsciiDigitsFormatter(),
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(instructions.otpLength ?? PayerOtpInstructions.maxLength),
+          ],
+          style: TextStyle(fontSize: theme.inputFontSize, letterSpacing: 4),
+          decoration: InputDecoration(labelText: strings.payerOtp('codeLabel'), errorText: error, errorMaxLines: 3),
+        ),
+        if (attempts != null) ...[
+          SizedBox(height: unit),
+          Text(
+            strings.payerOtpAttempts(attempts),
+            key: const ValueKey('wajub-payer-otp-attempts'),
+            style: TextStyle(color: colors.danger, fontSize: theme.fontSizeHint),
+          ),
+        ],
+        SizedBox(height: theme.gapRow),
+        FilledButton(
+          key: const ValueKey('wajub-payer-otp-submit'),
+          onPressed: busy ? null : () => unawaited(controller.submitPayerOtp(_code.text)),
+          child: busy
+              ? SizedBox.square(
+                  dimension: 20, child: CircularProgressIndicator(strokeWidth: 2, color: colors.onPrimary))
+              : Text(strings.payerOtp('submit')),
+        ),
+        TextButton(
+          key: const ValueKey('wajub-payer-otp-change'),
+          onPressed: busy ? null : controller.leavePayerOtp,
+          child: Text(strings.payerOtp('changeMethod')),
         ),
       ],
     );

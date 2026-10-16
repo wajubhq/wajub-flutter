@@ -152,7 +152,8 @@ CheckoutCallbacks(
 `state.wireName` is the state's name: `INITIATED` (method list), `COLLECTING_DETAILS` (a form), `PROCESSING` (Pay
 pressed), `APPROVAL_REQUIRED` (approve on the phone), `USSD_REQUIRED`, `OTP_REQUIRED`, `PIN_REQUIRED`,
 `PHONE_REQUIRED`, `BIRTHDAY_REQUIRED`, `ADDRESS_REQUIRED`, `3DS_REQUIRED`, `VERIFYING`, `PENDING` (waiting, or a
-provider page is open), `SUCCESS`, `FAILED`, `EXPIRED`, `CANCELLED`.
+provider page is open), `SUCCESS`, `FAILED`, `EXPIRED`, `CANCELLED`, `PAYER_OTP_REQUIRED` (a code the payer
+generates in the operator's menu).
 
 ### Results
 

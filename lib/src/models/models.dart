@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'json_read.dart';
+import 'payer_otp.dart';
 import 'payment_result.dart';
 import 'security_challenge.dart';
 
@@ -212,7 +213,15 @@ class SessionTransaction {
 
 /// One operator of a Mobile Money channel that groups several (`cm.mobile`).
 class ChannelOperator {
-  const ChannelOperator({required this.slug, required this.operator, required this.name, this.logo, this.logoPng});
+  const ChannelOperator({
+    required this.slug,
+    required this.operator,
+    required this.name,
+    this.logo,
+    this.logoPng,
+    this.feeAmount,
+    this.amountTotal,
+  });
 
   /// The operator's channel, e.g. `cm.orange`.
   final String slug;
@@ -227,6 +236,14 @@ class ChannelOperator {
   /// The same logo as a PNG, when there is one.
   final String? logoPng;
 
+  /// The payer's fee when paying with this operator, in the transaction's
+  /// currency; null when the fee does not depend on the operator.
+  final double? feeAmount;
+
+  /// What the payer pays with this operator, fee included; null when it
+  /// does not depend on the operator.
+  final double? amountTotal;
+
   factory ChannelOperator.fromJson(Map<String, dynamic> json) {
     final slug = readString(json['slug']) ?? '';
     return ChannelOperator(
@@ -235,6 +252,8 @@ class ChannelOperator {
       name: readString(json['name']) ?? slug,
       logo: readText(json['logo']),
       logoPng: readText(json['logo_png']),
+      feeAmount: readDouble(json['fee_amount']),
+      amountTotal: readDouble(json['amount_total']),
     );
   }
 }
@@ -253,6 +272,9 @@ class SessionChannel {
     this.maxAmount,
     required this.currency,
     this.operators = const [],
+    this.feeAmount,
+    this.amountTotal,
+    this.payerOtp,
   });
 
   final String id;
@@ -281,6 +303,19 @@ class SessionChannel {
   /// any other channel.
   final List<ChannelOperator> operators;
 
+  /// The payer's fee when paying with this channel, in the transaction's
+  /// currency; null when the fee does not depend on the channel.
+  final double? feeAmount;
+
+  /// What the payer pays with this channel, fee included; null when it does
+  /// not depend on the channel.
+  final double? amountTotal;
+
+  /// The code the payer generates in the operator's menu before paying with
+  /// this channel, when the operator asks for one.
+  @internal
+  final PayerOtpInstructions? payerOtp;
+
   /// Whether the channel groups several operators of one country.
   bool get isAggregate => operators.isNotEmpty;
 
@@ -301,6 +336,9 @@ class SessionChannel {
         maxAmount: readDouble(json['max_amount']),
         currency: readString(json['currency']) ?? '',
         operators: readMapList(json['operators']).map(ChannelOperator.fromJson).toList(),
+        feeAmount: readDouble(json['fee_amount']),
+        amountTotal: readDouble(json['amount_total']),
+        payerOtp: PayerOtpInstructions.fromJson(json['payer_otp']),
       );
 }
 
