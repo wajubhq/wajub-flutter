@@ -64,6 +64,12 @@ void main() {
         expect(data.e164(input, country, sandbox: true), data.e164(input, country), reason: reason);
       }
     }
+    // A + then national digits is another country's number, never a test number.
+    for (final (input, country) in [('+0 000000', 'GA'), ('+680000000', 'CM'), ('+07 00 00 00 00', 'CI')]) {
+      expect(data.sandboxTestNumber(input, country), isNull, reason: '$input in $country');
+      expect(data.isValid(input, country, sandbox: true), isFalse, reason: '$input in $country');
+      expect(data.detectOperator(input, country, sandbox: true), isNull, reason: '$input in $country');
+    }
     // Outside a sandbox session the prefixes mean nothing.
     expect(data.isValid('+225070000000', 'CI'), isFalse, reason: 'one digit short of an Ivorian number');
     expect(data.e164('90 00 00 00', 'BJ'), '+2290190000000');

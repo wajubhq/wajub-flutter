@@ -150,15 +150,16 @@ class MobileMoneyData {
   /// and a dial code that is not [country]'s.
   bool isForeign(String input, String country) => _typed(input, country).foreign;
 
-  /// How [input] is written for [country]. [national]: a leading `00` is
-  /// read as typed digits rather than as the international prefix.
-  _Typed _typed(String input, String country, {bool national = false}) {
+  /// How [input] is written for [country]. [zerosAsDigits]: a leading `00`
+  /// is read as typed digits rather than as the international prefix (a `+`
+  /// still is one).
+  _Typed _typed(String input, String country, {bool zerosAsDigits = false}) {
     final digits = sanitize(input);
     final entry = countryFor(country);
     if (entry == null) return _Typed(digits);
     final dial = entry.dialDigits;
-    final plus = !national && _writtenWithPlus(input);
-    final zeros = !national && !plus && digits.startsWith('00');
+    final plus = _writtenWithPlus(input);
+    final zeros = !zerosAsDigits && !plus && digits.startsWith('00');
     if (plus || zeros) {
       final international = zeros ? digits.substring(2) : digits;
       if (international.startsWith(dial)) return _Typed(international.substring(dial.length));
@@ -281,10 +282,11 @@ class MobileMoneyData {
     if (entry == null || prefixes == null || prefixes.isEmpty) return null;
     final dial = entry.dialDigits;
     final typed = _typed(input, country);
+    final zerosTyped = _typed(input, country, zerosAsDigits: true);
     final readings = [
       if (!typed.foreign) '$dial${_planSteps(entry, typed.digits)}',
       if (!typed.foreign) '$dial${typed.digits}',
-      '$dial${_typed(input, country, national: true).digits}',
+      if (!zerosTyped.foreign) '$dial${zerosTyped.digits}',
     ];
     for (final reading in readings) {
       SandboxPrefix? found;
