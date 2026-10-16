@@ -318,6 +318,39 @@ void main() {
     }
   });
 
+  test('a refused cancel reads the catalogue\'s text; payment_in_progress on a payment keeps its own', () async {
+    for (final (fixture, code, en, fr) in [
+      (
+        'cancel-409-payment-partly-paid.json',
+        'payment_partly_paid',
+        "Part of this payment has already been paid, so it can't be cancelled.",
+        'Une partie de ce paiement a déjà été réglée : il ne peut plus être annulé.',
+      ),
+      (
+        'cancel-409-payment-in-progress.json',
+        'payment_in_progress',
+        "This payment is being paid and can't be cancelled now.",
+        'Ce paiement est en cours de règlement et ne peut pas être annulé maintenant.',
+      ),
+    ]) {
+      final api = FakeApi(routes: {'POST /pay/cancel': fixture});
+      Object? thrown;
+      try {
+        await api.session().cancel();
+      } catch (e) {
+        thrown = e;
+      }
+      final error = thrown! as WajubError;
+      expect((error.code, error.type, error.retryable), (code, WajubErrorType.invalidRequestError, false));
+      expect(error.localized('en').message, en, reason: fixture);
+      expect(error.localized('fr').message, fr, reason: fixture);
+    }
+    // On a payment, payment_in_progress is not the cancel's refusal.
+    final process = WajubError.fromResponse(status: 409, body: fixtureBody('process-409-payment-in-progress.json'));
+    expect(process.code, 'payment_in_progress');
+    expect(process.localized('en').message, isNot(contains("can't be cancelled")));
+  });
+
   test('ER-02 reads the correlation id from X-Request-Id', () async {
     final api = FakeApi(routes: {
       'POST /pay/process': FakeAnswer.fixture('process-failed-402.json', headers: {'x-request-id': 'req_7c1e'}),

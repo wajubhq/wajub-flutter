@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import '../errors/error_catalogue.dart';
 import 'json_read.dart';
 import 'models.dart';
@@ -37,6 +39,7 @@ class WajubError implements Exception {
     this.blockReference,
     this.apiMessage,
     this.attemptsRemaining,
+    this.cancelRefusal = false,
   });
 
   final WajubErrorType type;
@@ -70,6 +73,11 @@ class WajubError implements Exception {
 
   /// A confirmation step refused: the attempts the payer has left.
   final int? attemptsRemaining;
+
+  /// The answer to a cancel: `payment_in_progress` then means the payment
+  /// cannot be cancelled while it is being paid.
+  @internal
+  final bool cancelRefusal;
 
   /// Always `WajubError`.
   String get name => 'WajubError';
@@ -125,6 +133,7 @@ class WajubError implements Exception {
     int? retryAfterHeader,
     String language = 'en',
     bool loading = false,
+    bool cancelling = false,
   }) {
     final nested = readMap(body['error']);
     var code = readText(body['error_code']) ??
@@ -157,6 +166,7 @@ class WajubError implements Exception {
       blockReference: readText(body['block_reference']),
       apiMessage: readText(nested?['message']) ?? readText(body['message']),
       attemptsRemaining: readInt(body['attempts_remaining']),
+      cancelRefusal: cancelling,
     );
     return error.localized(language);
   }
@@ -206,7 +216,8 @@ class WajubError implements Exception {
 
   /// The same error with its [message] in [language] (`fr` or `en`).
   WajubError localized(String language) {
-    final entry = ErrorCatalogue.lookup(code) ?? (httpStatus == 402 ? ErrorCatalogue.declineFallback : null);
+    final entry = ErrorCatalogue.entryFor(code, cancelling: cancelRefusal) ??
+        (httpStatus == 402 ? ErrorCatalogue.declineFallback : null);
     final String text;
     if (code == 'validation_error' && language != 'fr' && apiMessage != null) {
       text = apiMessage!;
@@ -243,6 +254,7 @@ class WajubError implements Exception {
         blockReference: blockReference,
         apiMessage: apiMessage,
         attemptsRemaining: attemptsRemaining,
+        cancelRefusal: cancelRefusal,
       );
 
   /// The error as a JSON map (`name`, `type`, `code`, `message`…), for your

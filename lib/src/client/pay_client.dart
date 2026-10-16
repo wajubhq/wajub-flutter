@@ -329,6 +329,7 @@ class PayClient {
         retryAfterHeader: retryAfter,
         language: language,
         loading: loading,
+        cancelling: path == '/pay/cancel',
       );
     }
   }

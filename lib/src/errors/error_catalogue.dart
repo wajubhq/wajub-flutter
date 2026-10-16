@@ -34,6 +34,19 @@ abstract final class ErrorCatalogue {
     "Ce paiement n'a pas abouti. Réessayez ou utilisez un autre moyen de paiement.",
   );
 
+  /// `payment_in_progress` when a cancel is refused: the payment is being
+  /// paid. (On a payment, the same code is not an error: the sheet waits.)
+  static const cancelInProgress = ErrorEntry(
+    _invalid,
+    false,
+    "This payment is being paid and can't be cancelled now.",
+    'Ce paiement est en cours de règlement et ne peut pas être annulé maintenant.',
+  );
+
+  /// The entry of [code], [cancelling] when the error answers a cancel.
+  static ErrorEntry? entryFor(String code, {bool cancelling = false}) =>
+      cancelling && code == 'payment_in_progress' ? cancelInProgress : lookup(code);
+
   static const entries = <String, ErrorEntry>{
     // Load.
     'session_not_found': ErrorEntry(
@@ -210,6 +223,12 @@ abstract final class ErrorCatalogue {
       false,
       'This payment can no longer be processed.',
       'Ce paiement ne peut plus être traité.',
+    ),
+    'payment_partly_paid': ErrorEntry(
+      _invalid,
+      false,
+      "Part of this payment has already been paid, so it can't be cancelled.",
+      'Une partie de ce paiement a déjà été réglée : il ne peut plus être annulé.',
     ),
     'order_not_validated': ErrorEntry(
       _invalid,
