@@ -49,6 +49,14 @@ abstract final class MobileMoneyRules {
     return detected;
   }
 
+  /// The choice before any number is typed: the first offered operator that
+  /// is not a wallet taking any number (Express Union, Wave…), else the
+  /// first.
+  static String? initialChoice({required MobileMoneyData data, required List<String> choiceIds}) {
+    if (choiceIds.isEmpty) return null;
+    return choiceIds.where((id) => !data.isOperatorIndependent(id)).firstOrNull ?? choiceIds.first;
+  }
+
   /// The selection once the number changed: an operator the payer picked by
   /// hand is kept ("a payer who picked Wave keeps it on their Orange
   /// number"); otherwise a detected operator among the choices is selected;

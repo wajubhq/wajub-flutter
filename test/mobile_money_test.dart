@@ -149,7 +149,8 @@ void main() {
       expect(
         MobileMoneyRules.preselect(
           choiceIds: choices,
-          currentId: picked ?? choices.first,
+          // Before the number: the first choice that is no wallet taking any number.
+          currentId: picked ?? MobileMoneyRules.initialChoice(data: data, choiceIds: choices),
           pickedByHand: picked != null,
           detectedId: data.detectOperator(phone, country),
         ),
@@ -157,6 +158,13 @@ void main() {
         reason: '$phone in $country, picked ${picked ?? 'nothing'}',
       );
     }
+  });
+
+  test('MM-03 starts on a network operator, never a wallet that takes any number', () {
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const ['eu', 'mtn', 'orange']), 'mtn');
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const ['wave', 'orange']), 'orange');
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const ['wave', 'eu']), 'wave', reason: 'all are');
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const []), isNull);
   });
 
   group('MM-04 lists aggregate operators', () {

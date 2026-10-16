@@ -695,7 +695,9 @@ class CheckoutController extends ChangeNotifier {
     _choices = data == null || country == null
         ? const []
         : operatorChoices(_method?.channels ?? const [], country, data, language: language);
-    _selectedId = _choices.isEmpty ? null : _choices.first.id;
+    _selectedId = data == null
+        ? null
+        : MobileMoneyRules.initialChoice(data: data, choiceIds: [for (final choice in _choices) choice.id]);
     _preselect();
   }
 

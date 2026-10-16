@@ -586,6 +586,19 @@ void main() {
     });
   });
 
+  test('MM-03 opens the form on a network operator before any number', () {
+    virtual((async) {
+      // The sandbox session lists Express Union (a wallet taking any number) first.
+      final checkout = Checkout(async, loading('session-sandbox-cm.json', config: 'sdk-config-sandbox.json'));
+      checkout.controller.selectMethod(checkout.method(MethodFamily.mobileMoney));
+      expect(checkout.controller.choices.first.id, 'eu');
+      expect(checkout.controller.selectedOperatorId, 'mtn');
+      checkout.controller.setPhone('691234567');
+      expect(checkout.controller.selectedOperatorId, 'orange', reason: 'then the number decides');
+      checkout.end();
+    });
+  });
+
   test('a sandbox test number of another operator is refused in the sheet', () {
     virtual((async) {
       // +23768 tests Express Union, where the numbering plan has MTN.
