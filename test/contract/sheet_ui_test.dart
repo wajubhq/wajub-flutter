@@ -689,6 +689,11 @@ void main() {
     expect(find.text('Your operator did not accept this code. Generate a new one and try again.'), findsOneWidget);
     expect(find.text('2 tries left.'), findsOneWidget);
     await tester.ensureVisible(code);
+    await tester.enterText(code, '6');
+    await tester.pump();
+    expect(find.text('Your operator did not accept this code. Generate a new one and try again.'), findsNothing,
+        reason: 'gone once the payer types again');
+    expect(find.text('2 tries left.'), findsOneWidget);
     await tester.enterText(code, '12');
     await tapShown(tester, submit);
     await tester.pump();
@@ -713,8 +718,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     const text = 'Your operator refused too many codes for this payment. Choose another payment method.';
     expect(find.byKey(const ValueKey('wajub-banner')), findsOneWidget);
-    expect(find.byKey(const ValueKey('wajub-operator-blocked')), findsOneWidget);
-    expect(find.text(text), findsAtLeastNWidgets(2));
+    expect(find.text(text), findsNWidgets(2), reason: 'the banner and the disabled operator');
     expect(tester.widget<FilledButton>(find.byKey(const ValueKey('wajub-pay-button'))).onPressed, isNull);
     expect(find.byKey(const ValueKey('wajub-payer-otp-hint')), findsNothing);
     exhausted.controller.hostGone();
@@ -724,7 +728,7 @@ void main() {
     final noAmount = await codeScreen(session(amount: null, steps: false), const []);
     expect(find.text('Exact amount to enter'), findsNothing);
     expect(find.byKey(const ValueKey('wajub-payer-otp-amount')), findsNothing);
-    expect(find.text('Generate a payment code for the exact amount of the payment.'), findsOneWidget);
+    expect(find.text('Generate a payment code for the exact amount.'), findsOneWidget);
     noAmount.controller.hostGone();
     await tester.pumpWidget(const SizedBox());
   });

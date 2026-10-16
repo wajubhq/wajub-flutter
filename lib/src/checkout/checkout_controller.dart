@@ -610,6 +610,10 @@ class CheckoutController extends ChangeNotifier {
         final family = _method?.family;
         _methods = buildMethods(loaded, _sdkConfig);
         if (family != null) _method = _methods.where((m) => m.family == family).firstOrNull ?? _method;
+        // Back on the form before the tables came: build it now.
+        if (_screen == CheckoutScreen.form && _method?.family == MethodFamily.mobileMoney && _choices.isEmpty) {
+          _resetMobileMoney();
+        }
         notifyListeners();
       }));
       return;
@@ -802,11 +806,19 @@ class CheckoutController extends ChangeNotifier {
     _choices = data == null || country == null
         ? const []
         : operatorChoices(_method?.channels ?? const [], country, data, language: language);
-    _selectedId = data == null
-        ? null
-        : MobileMoneyRules.initialChoice(data: data, choiceIds: [for (final choice in _choices) choice.id]);
+    _selectedId = data == null ? null : MobileMoneyRules.initialChoice(data: data, choiceIds: _offeredIds);
     _preselect();
   }
+
+  /// The operators the payer can pay with: those no block keeps out.
+  List<String> get _offeredIds => [
+        for (final choice in _choices)
+          if (operatorBlock(choice) == null) choice.id,
+      ];
+
+  /// Whether any operator of the form can take the payment: without one,
+  /// Pay is off.
+  bool get hasOfferedOperator => _offeredIds.isNotEmpty;
 
   /// The payer picked an operator: detection never overrides it.
   void pickOperator(String id) {
@@ -833,11 +845,19 @@ class CheckoutController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Among the operators still offered: a disabled one is never the first
+  /// choice nor the detected one, and a selection that became disabled
+  /// moves to the first choice still offered.
   void _preselect() {
     final data = _mobileMoneyData;
     if (data == null || _country == null) return;
+    final offered = _offeredIds;
+    if (!offered.contains(_selectedId)) {
+      _pickedByHand = false;
+      _selectedId = MobileMoneyRules.initialChoice(data: data, choiceIds: offered);
+    }
     _selectedId = MobileMoneyRules.preselect(
-      choiceIds: [for (final choice in _choices) choice.id],
+      choiceIds: offered,
       currentId: _selectedId,
       pickedByHand: _pickedByHand,
       detectedId: data.detectOperator(_phone, _country!, sandbox: _sandbox),
@@ -1748,6 +1768,14 @@ class CheckoutController extends ChangeNotifier {
     await _process(charge.$1, {...charge.$2, 'otp': code}, MethodFamily.mobileMoney, screen: CheckoutScreen.payerOtp);
   }
 
+  /// The payer types a new code: what the screen said about the last one
+  /// goes; the tries left stay.
+  void payerOtpTyped() {
+    if (_payerOtpNotice == null) return;
+    _payerOtpNotice = null;
+    notifyListeners();
+  }
+
   /// "Use another payment method": back to the Mobile Money form.
   void leavePayerOtp() {
     if (_screen != CheckoutScreen.payerOtp || _busy || settled) return;
@@ -1791,6 +1819,10 @@ class CheckoutController extends ChangeNotifier {
       _exhaustedChannels.addAll([
         if (_payerOtp?.channel case final channel? when channel.isNotEmpty) channel,
         if (_chargedChoice case final slug?) slug,
+        // A sheet reopened on the payment: the channel it was being paid on.
+        if ((_transaction ?? _session?.transaction)?.processingContext?.channelSlug case final slug?
+            when slug.isNotEmpty)
+          slug,
       ]);
     }
     _attempt++;
@@ -1806,6 +1838,14 @@ class CheckoutController extends ChangeNotifier {
     _busy = false;
     _fieldErrors = const {};
     _banner = error.message;
+    // The payment's form, as on a first opening — also on a sheet reopened
+    // on a payment in progress, where it was never built.
+    if (_method?.family != MethodFamily.mobileMoney || _country == null || _choices.isEmpty) {
+      _method = _methods.where((m) => m.family == MethodFamily.mobileMoney).firstOrNull ?? _method;
+      if (_method?.family == MethodFamily.mobileMoney) _resetMobileMoney();
+    } else {
+      _preselect();
+    }
     _enter(CheckoutState.collectingDetails, CheckoutScreen.form);
     if (report) _call(() => _callbacks.onError?.call(error));
   }

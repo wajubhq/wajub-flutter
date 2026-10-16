@@ -11,6 +11,7 @@ import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/payer_otp.dart';
 import 'package:wajub_mobile/src/models/payment_result.dart';
 import 'package:wajub_mobile/src/realtime/payment_watcher.dart';
+import 'package:wajub_mobile/src/widgets/sheet_strings.dart';
 import 'package:wajub_mobile/wajub_mobile.dart' as public;
 
 import '../support/fake_api.dart';
@@ -451,14 +452,16 @@ void main() {
       checkout.run(() => controller.submitPayerOtp('654323'));
       final text = ErrorCatalogue.text(ErrorCatalogue.lookup('otp_attempts_exceeded')!, 'en');
       expect((controller.state, controller.banner), (CheckoutState.collectingDetails, text));
-      final orange = controller.selectedChoice!;
+      final orange = controller.choices.single;
       expect(controller.operatorBlock(orange)?.message, text, reason: 'shown disabled with that text');
       expect(controller.announcedPayerOtp, isNull);
+      expect((controller.selectedChoice, controller.hasOfferedOperator), (null, false),
+          reason: 'none left: no selection, no Pay');
 
+      controller.pickOperator('orange');
       checkout.run(controller.payMobileMoney);
       expect((controller.state, controller.screen), (CheckoutState.collectingDetails, CheckoutScreen.form),
           reason: 'Pay never reopens the code screen there');
-      expect(controller.fieldErrors['data.operator'], text);
       expect(api.calls('/pay/process'), hasLength(1));
       checkout.end();
     });
@@ -473,7 +476,8 @@ void main() {
       checkout.run(() => checkout.controller.submitPayerOtp('123456'));
       checkout.elapse(const Duration(seconds: 6));
       expect(checkout.controller.state, CheckoutState.collectingDetails);
-      expect(checkout.controller.operatorBlock(checkout.controller.selectedChoice!), isNotNull);
+      expect(checkout.controller.operatorBlock(checkout.controller.choices.single), isNotNull);
+      expect(checkout.controller.hasOfferedOperator, isFalse);
       checkout.run(checkout.controller.payMobileMoney);
       expect(checkout.controller.state, CheckoutState.collectingDetails);
       expect(api.calls('/pay/process'), hasLength(1));
@@ -515,6 +519,10 @@ void main() {
     expect(sparse.stepsFor('fr').single.template, isNull);
     expect(sparse.otpLength, isNull);
     expect(sparse.attemptsRemaining, 0, reason: 'none left');
+    expect((SheetStrings.en.payerOtpAttempts(0), SheetStrings.fr.payerOtpAttempts(0)),
+        ('No tries left.', 'Plus aucun essai possible.'));
+    expect((SheetStrings.en.payerOtpGenericSteps(null)[1], SheetStrings.fr.payerOtpGenericSteps(null)[1]),
+        ('Generate a payment code for the exact amount.', 'Générez un code de paiement pour le montant exact.'));
     expect(PayerOtpInstructions.fromJson({'ussd_code': '*144 *4*6 #'})!.dialUrl, 'tel:*144*4*6%23');
     for (final (length, read) in [(-3, null), (0, null), (1, 1), (12, 12), (13, null), ('6', 6)]) {
       expect(PayerOtpInstructions.fromJson({'otp_length': length})!.otpLength, read, reason: '$length');
@@ -530,6 +538,10 @@ void main() {
       checkout.mobileMoney('70000000');
       checkout.run(controller.payMobileMoney);
       checkout.run(() => controller.submitPayerOtp('654321'));
+      expect((controller.payerOtpNotice, controller.payerOtpAttemptsRemaining), (PayerOtpNotice.refused, 2));
+      controller.payerOtpTyped();
+      expect((controller.payerOtpNotice, controller.payerOtpAttemptsRemaining), (null, 2),
+          reason: 'the refusal goes once the payer types again; the tries left stay');
       checkout.run(() => controller.submitPayerOtp('12'));
       expect((controller.payerOtpNotice, controller.payerOtpAttemptsRemaining), (PayerOtpNotice.invalidLength, 2));
       expect(api.calls('/pay/process'), hasLength(2));
@@ -596,8 +608,9 @@ void main() {
       expect(controller.amountToPay, 10200);
       checkout.end();
     });
+  });
 
-    // CH-05: the chosen operator's total against its channel's limits.
+  test('CH-05 disables channels out of their limits (what the chosen operator costs)', () {
     virtual((async) {
       final session = fixtureBody('session-payer-fee-per-channel.json');
       ((session['channels'] as List).first as Map)['max_amount'] = 10300;
@@ -615,9 +628,77 @@ void main() {
       controller.pickOperator('orange');
       expect(controller.selectedOperatorId, 'mtn', reason: 'not offered');
       controller.setPhone('690000000');
-      expect(controller.selectedOperatorId, 'orange', reason: 'the number names it');
+      expect(controller.selectedOperatorId, 'mtn', reason: 'detection never selects a disabled operator');
       checkout.run(controller.payMobileMoney);
+      expect(controller.fieldErrors['data.phone'], contains('Orange'), reason: 'the number is not MTN');
       expect(api.calls('/pay/process'), isEmpty);
+      checkout.end();
+    });
+  });
+
+  test('MM-13 handles refused payer codes (the form on a reopened sheet)', () {
+    // A sheet reopened on an approval in progress never built its form: a
+    // refusal brings it, the payment's country and its operators.
+    for (final (status, exhausted) in [
+      (FakeAnswer.fixture('status-pending-payer-otp-refused.json'), false),
+      (pendingWith('otp_attempts_exceeded'), true),
+    ]) {
+      virtual((async) {
+        // Reopened on MTN, with Orange offered too.
+        final session = fixtureBody('session-processing-mobile-money.json');
+        final aggregate = fixtureBody('session-cm-aggregate.json');
+        final orange = (((aggregate['channels'] as List).firstWhere((c) => (c as Map)['slug'] == 'cm.mobile')
+                as Map)['operators'] as List)
+            .firstWhere((o) => (o as Map)['operator'] == 'orange');
+        (((session['channels'] as List).first as Map)['operators'] as List).add(orange);
+        final api = FakeApi(routes: {
+          'GET /pay/session': FakeAnswer(200, session),
+          'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+          'GET /pay/status': status,
+        });
+        final checkout = Checkout(async, api);
+        final controller = checkout.controller;
+        checkout.elapse(const Duration(seconds: 1));
+        expect((controller.state, controller.screen), (CheckoutState.collectingDetails, CheckoutScreen.form),
+            reason: '$exhausted');
+        expect(controller.method?.family, MethodFamily.mobileMoney);
+        expect(controller.country, 'CM');
+        expect(controller.choices.map((c) => c.id), ['mtn', 'orange']);
+        expect(controller.hasOfferedOperator, isTrue);
+        if (exhausted) {
+          expect(controller.operatorBlock(controller.choices.first), isNotNull, reason: 'cm.mtn was being paid');
+          expect(controller.selectedOperatorId, 'orange', reason: 'the first choice still offered');
+          expect(checkout.recorder.errors.map((e) => e.code), ['otp_attempts_exceeded']);
+        } else {
+          expect(controller.banner, ErrorCatalogue.text(ErrorCatalogue.payerOtpRefused, 'en'));
+          expect(controller.selectedOperatorId, 'mtn');
+          expect(checkout.recorder.errors, isEmpty);
+        }
+        checkout.end();
+      });
+    }
+  });
+
+  test('MM-03 never selects a disabled operator', () {
+    // The selection becomes disabled: it moves to the first choice still
+    // offered, and detection does not bring it back.
+    virtual((async) {
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-sandbox-cm.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': ['process-payer-otp-required.json', 'process-402-payer-otp-attempts-exceeded.json'],
+      });
+      final checkout = Checkout(async, api);
+      final controller = checkout.controller;
+      checkout.mobileMoney('670000000', pick: 'mtn');
+      checkout.run(controller.payMobileMoney);
+      checkout.run(() => controller.submitPayerOtp('654323'));
+      expect(controller.state, CheckoutState.collectingDetails);
+      final mtn = controller.choices.firstWhere((c) => c.id == 'mtn');
+      expect(controller.operatorBlock(mtn), isNotNull);
+      expect(controller.selectedOperatorId, 'orange', reason: "MM-03's first choice still offered");
+      controller.setPhone('670000001');
+      expect(controller.selectedOperatorId, 'orange', reason: 'an MTN number does not select it');
       checkout.end();
     });
   });

@@ -166,8 +166,6 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
     final errors = controller.fieldErrors;
     final showList = controller.showOperatorList;
     final badge = showList ? null : controller.badgeOperator;
-    final selected = controller.selectedChoice;
-    final selectedBlock = selected == null ? null : _blockText(controller, strings, controller.operatorBlock(selected));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -261,14 +259,6 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
             ),
           ),
         SizedBox(height: theme.gapRow),
-        if (selectedBlock != null) ...[
-          Text(
-            selectedBlock,
-            key: const ValueKey('wajub-operator-blocked'),
-            style: TextStyle(color: colors.danger, fontSize: theme.fontSizeLabel),
-          ),
-          SizedBox(height: theme.gapRow),
-        ],
         if (controller.announcedPayerOtp case final announced?) ...[
           Text(
             strings.payerOtpFormHint(announced.ussdCode),
@@ -280,7 +270,8 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
         _PayButton(
           controller: controller,
           label: strings.pay(_amount(controller)),
-          onPressed: choices.isEmpty || selectedBlock != null ? null : () => unawaited(controller.payMobileMoney()),
+          // A disabled operator is never selected: with none offered, no Pay.
+          onPressed: controller.hasOfferedOperator ? () => unawaited(controller.payMobileMoney()) : null,
         ),
       ],
     );
@@ -946,6 +937,7 @@ class _PayerOtpFormState extends State<PayerOtpForm> {
             enabled: !busy,
             label: strings.payerOtp('codeLabel'),
             error: error,
+            onChanged: controller.payerOtpTyped,
           )
         else
           TextField(
@@ -961,6 +953,7 @@ class _PayerOtpFormState extends State<PayerOtpForm> {
             ],
             style: TextStyle(fontSize: theme.inputFontSize, letterSpacing: 4),
             decoration: InputDecoration(labelText: strings.payerOtp('codeLabel'), errorText: error, errorMaxLines: 3),
+            onChanged: (_) => controller.payerOtpTyped(),
           ),
         if (attempts != null) ...[
           SizedBox(height: unit),
@@ -999,6 +992,7 @@ class _CodeBoxes extends StatefulWidget {
     required this.enabled,
     required this.label,
     this.error,
+    this.onChanged,
   });
 
   final TextEditingController controller;
@@ -1006,6 +1000,9 @@ class _CodeBoxes extends StatefulWidget {
   final bool enabled;
   final String label;
   final String? error;
+
+  /// The payer typed, erased or pasted.
+  final VoidCallback? onChanged;
 
   @override
   State<_CodeBoxes> createState() => _CodeBoxesState();
@@ -1126,6 +1123,7 @@ class _CodeBoxesState extends State<_CodeBoxes> {
                     LengthLimitingTextInputFormatter(widget.length),
                   ],
                   decoration: const InputDecoration.collapsed(hintText: null),
+                  onChanged: (_) => widget.onChanged?.call(),
                 ),
               ),
             ),
