@@ -13,7 +13,12 @@ class PayerOtpStep {
   /// fill, to show those values your own way.
   final String? template;
 
+  /// A step given as a plain string is that [text].
   static PayerOtpStep? fromJson(Object? json) {
+    if (json is String) {
+      final text = readText(json);
+      return text == null ? null : PayerOtpStep(text: text);
+    }
     final map = readMap(json);
     final text = readText(map?['text']);
     if (map == null || text == null) return null;
@@ -33,7 +38,7 @@ class PayerOtpInstructions {
     required this.channel,
     this.ussdCode,
     this.otpLength,
-    required this.amount,
+    this.amount,
     required this.currency,
     this.steps = const {},
     this.reason,
@@ -46,13 +51,21 @@ class PayerOtpInstructions {
   /// The code to dial (`*144*4*6#`), shown as is.
   final String? ussdCode;
 
-  /// The code's exact number of digits; null: 4 to 8.
+  /// The code's exact number of digits, 1 to 12; null: 4 to 8.
   final int? otpLength;
 
   /// The exact amount the payer types in the operator's menu: show it as
-  /// it is, never reformatted.
-  final String amount;
+  /// it is, never reformatted. Null when it is not known: show no amount.
+  final String? amount;
   final String currency;
+
+  /// [amount] and [currency] as the payer reads them (`1000 XOF`), or null
+  /// without an amount.
+  String? get amountText {
+    final value = amount;
+    if (value == null) return null;
+    return currency.isEmpty ? value : '$value $currency';
+  }
 
   /// By language (`fr`, `en`…).
   final Map<String, List<PayerOtpStep>> steps;
@@ -62,15 +75,16 @@ class PayerOtpInstructions {
   /// accept it). Null when the payment's channel announces it.
   final String? reason;
 
-  /// Codes the operator may still refuse for this payment on this channel.
+  /// Codes the operator may still refuse for this payment on this channel;
+  /// 0 when none.
   final int? attemptsRemaining;
 
-  /// A `tel:` link that opens the dialer on [ussdCode] (`#` written
-  /// `%23`), or null without one. Android dials it; iOS refuses `*` and `#`
-  /// in a link, so offer to copy the code there.
+  /// A `tel:` link that opens the dialer on [ussdCode] (without spaces, `#`
+  /// written `%23`), or null without one. Android dials it; iOS refuses `*`
+  /// and `#` in a link, so offer to copy the code there.
   String? get dialUrl {
-    final code = ussdCode;
-    return code == null ? null : 'tel:${code.replaceAll('#', '%23')}';
+    final code = ussdCode?.replaceAll(RegExp(r'\s+'), '');
+    return code == null || code.isEmpty ? null : 'tel:${code.replaceAll('#', '%23')}';
   }
 
   /// The shortest and the longest code when [otpLength] does not say.
@@ -117,16 +131,20 @@ class PayerOtpInstructions {
     return parts;
   }
 
+  /// The longest code length taken as such: beyond, or below 1, the length
+  /// is not known.
+  static const _longestKnown = 12;
+
   static PayerOtpInstructions? fromJson(Object? json) {
     final map = readMap(json);
-    final amount = readText(map?['amount']);
-    if (map == null || amount == null) return null;
+    if (map == null) return null;
     final length = readInt(map['otp_length']);
+    final attempts = readInt(map['attempts_remaining']);
     return PayerOtpInstructions(
       channel: readString(map['channel']) ?? '',
       ussdCode: readText(map['ussd_code']),
-      otpLength: length != null && length > 0 ? length : null,
-      amount: amount,
+      otpLength: length != null && length >= 1 && length <= _longestKnown ? length : null,
+      amount: readText(map['amount']),
       currency: readString(map['currency']) ?? '',
       steps: {
         for (final entry in (readMap(map['steps']) ?? const <String, dynamic>{}).entries)
@@ -135,7 +153,7 @@ class PayerOtpInstructions {
           ].whereType<PayerOtpStep>().toList(),
       },
       reason: readText(map['reason'])?.toLowerCase(),
-      attemptsRemaining: readInt(map['attempts_remaining']),
+      attemptsRemaining: attempts == null || attempts >= 0 ? attempts : 0,
     );
   }
 }

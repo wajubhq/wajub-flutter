@@ -567,8 +567,10 @@ void main() {
     await tester.pump();
     expect(copied, ['*144*4*6#']);
     expect(find.text('Copied'), findsOneWidget);
-    await tester.pump(const Duration(seconds: 3));
-    expect(find.text('Copy'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1900));
+    expect(find.text('Copied'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Copy'), findsOneWidget, reason: 'back after 2 s');
     expect(find.text('Test mode: enter the code 123456. Any other code is refused.'), findsOneWidget);
 
     // iOS refuses * and # in a tel: link: copy only.
@@ -645,6 +647,85 @@ void main() {
     expect(find.text('Code reçu. Votre opérateur traite le paiement, cela peut prendre quelques instants.'),
         findsOneWidget);
     sheet.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('MM-13 handles refused payer codes (the sheet)', (tester) async {
+    Future<Sheet> codeScreen(Map<String, dynamic> session, List<Object> process) async {
+      final sheet = Sheet(FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': process,
+        'GET /pay/status': 'status-processing.json',
+      }));
+      await sheet.open(tester);
+      await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '70000000');
+      await tester.pump();
+      await tapShown(tester, find.byKey(const ValueKey('wajub-pay-button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      return sheet;
+    }
+
+    Map<String, dynamic> session({bool announced = true, String? amount = '1000', bool steps = true}) {
+      final body = fixtureBody('session-payer-otp-announced.json');
+      final channel = (body['channels'] as List).first as Map;
+      final otp = channel['payer_otp'] as Map;
+      if (amount == null) otp.remove('amount');
+      if (!steps) otp['steps'] = <String, Object>{};
+      if (!announced) channel.remove('payer_otp');
+      return body;
+    }
+
+    final code = find.byKey(const ValueKey('wajub-payer-otp-code'));
+    final submit = find.byKey(const ValueKey('wajub-payer-otp-submit'));
+
+    // Refused, then a code too short: the tries left stay. Accepted: no
+    // phone line on the approval screen.
+    final refused = await codeScreen(
+        session(announced: false), ['process-payer-otp-refused.json', 'process-payer-otp-accepted-sandbox.json']);
+    expect(find.text('Your operator did not accept this code. Generate a new one and try again.'), findsOneWidget);
+    expect(find.text('2 tries left.'), findsOneWidget);
+    await tester.ensureVisible(code);
+    await tester.enterText(code, '12');
+    await tapShown(tester, submit);
+    await tester.pump();
+    expect(find.text('The code must have 6 digits.'), findsOneWidget);
+    expect(find.text('2 tries left.'), findsOneWidget, reason: 'a code not sent does not count');
+    await tester.enterText(code, '123456');
+    await tapShown(tester, submit);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+        find.text('Code received. Your operator is processing the payment, this can take a moment.'), findsOneWidget);
+    expect(find.textContaining('+226'), findsNothing, reason: 'no phone line after a code');
+    refused.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+
+    // Too many refusals: the channel shown disabled with that error, Pay off.
+    final exhausted = await codeScreen(session(), ['process-402-payer-otp-attempts-exceeded.json']);
+    await tester.ensureVisible(code);
+    await tester.enterText(code, '654323');
+    await tapShown(tester, submit);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    const text = 'Your operator refused too many codes for this payment. Choose another payment method.';
+    expect(find.byKey(const ValueKey('wajub-banner')), findsOneWidget);
+    expect(find.byKey(const ValueKey('wajub-operator-blocked')), findsOneWidget);
+    expect(find.text(text), findsAtLeastNWidgets(2));
+    expect(tester.widget<FilledButton>(find.byKey(const ValueKey('wajub-pay-button'))).onPressed, isNull);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-hint')), findsNothing);
+    exhausted.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+
+    // No amount: no amount box, and the generic step without it.
+    final noAmount = await codeScreen(session(amount: null, steps: false), const []);
+    expect(find.text('Exact amount to enter'), findsNothing);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-amount')), findsNothing);
+    expect(find.text('Generate a payment code for the exact amount of the payment.'), findsOneWidget);
+    noAmount.controller.hostGone();
     await tester.pumpWidget(const SizedBox());
   });
 

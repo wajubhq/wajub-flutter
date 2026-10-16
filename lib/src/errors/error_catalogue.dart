@@ -43,6 +43,15 @@ abstract final class ErrorCatalogue {
     'Ce paiement est en cours de règlement et ne peut pas être annulé maintenant.',
   );
 
+  /// `invalid_otp` on a payment (a refusal the status reports, or a charge's
+  /// answer): the operator did not accept the code the payer generated.
+  static const payerOtpRefused = ErrorEntry(
+    _payment,
+    true,
+    'Your operator did not accept this code. Generate a new one and try again.',
+    "Votre opérateur n'a pas accepté ce code. Générez-en un nouveau et réessayez.",
+  );
+
   /// The entry of [code], [cancelling] when the error answers a cancel.
   static ErrorEntry? entryFor(String code, {bool cancelling = false}) =>
       cancelling && code == 'payment_in_progress' ? cancelInProgress : lookup(code);

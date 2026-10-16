@@ -63,7 +63,9 @@ WatchDecision? decideStatus(PaymentStatusUpdate update, {required bool seenProce
 WajubError attemptEndedError(PaymentStatusUpdate update, String language) {
   final code = update.errorCode;
   if (code == null) return WajubError.of('payment_attempt_ended', language: language);
-  final entry = ErrorCatalogue.lookup(code);
+  // On a payment, `invalid_otp` is the operator refusing the payer's own
+  // code, not a confirmation step's wrong code.
+  final entry = code == 'invalid_otp' ? ErrorCatalogue.payerOtpRefused : ErrorCatalogue.lookup(code);
   return WajubError(
     type: entry?.type ?? WajubErrorType.paymentError,
     message: entry != null

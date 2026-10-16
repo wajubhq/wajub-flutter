@@ -1,4 +1,8 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wajub_mobile/src/checkout/altcha.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
 import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
@@ -6,6 +10,7 @@ import 'package:wajub_mobile/src/errors/error_catalogue.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/payer_otp.dart';
 import 'package:wajub_mobile/src/models/payment_result.dart';
+import 'package:wajub_mobile/src/realtime/payment_watcher.dart';
 import 'package:wajub_mobile/wajub_mobile.dart' as public;
 
 import '../support/fake_api.dart';
@@ -28,6 +33,16 @@ FakeApi payerOtpApi({bool announced = true, required List<Object> process, Objec
     'GET /pay/status': status,
     'POST /pay/cancel': 'cancel-200.json',
   });
+}
+
+/// The Burkina Faso session as a body: its Orange channel's `payer_otp`
+/// changed by [change], or removed when [change] returns null.
+Map<String, dynamic> announcedSession(Map<String, dynamic>? Function(Map<String, dynamic> otp) change) {
+  final session = fixtureBody('session-payer-otp-announced.json');
+  final channel = (session['channels'] as List).first as Map;
+  final otp = change(Map<String, dynamic>.from(channel['payer_otp'] as Map));
+  otp == null ? channel.remove('payer_otp') : channel['payer_otp'] = otp;
+  return session;
 }
 
 /// A status read saying the payment is `pending` again, refused with [code].
@@ -365,6 +380,244 @@ void main() {
       expect(checkout.recorder.errors.map((e) => e.code), ['otp_attempts_exceeded']);
       expect(checkout.recorder.events.where((e) => e.startsWith('started')), hasLength(2),
           reason: 'each code the operator took started an attempt');
+      checkout.end();
+    });
+  });
+
+  test('MM-13 handles refused payer codes (the refusal baseline)', () {
+    // The refused answer's invalid_otp is the payment's last refusal: a code
+    // sent next that gets no answer is not taken as refused by a status
+    // still carrying it.
+    virtual((async) {
+      final api = payerOtpApi(
+        announced: false,
+        process: ['process-payer-otp-required.json', 'process-payer-otp-refused.json', const FakeAnswer.network()],
+        status: 'status-pending-payer-otp-refused.json',
+      );
+      final checkout = Checkout(async, api);
+      final controller = checkout.controller;
+      checkout.mobileMoney('70000000');
+      checkout.run(controller.payMobileMoney);
+      checkout.run(() => controller.submitPayerOtp('654321'));
+      expect((controller.payerOtpNotice, controller.payerOtpAttemptsRemaining), (PayerOtpNotice.refused, 2));
+      final opened = controller.payerOtpRound;
+
+      checkout.run(() => controller.submitPayerOtp('123457'));
+      checkout.elapse(const Duration(seconds: 30));
+      expect(controller.state, CheckoutState.pending, reason: 'the old refusal is not news');
+      expect(controller.payerOtpRound, opened);
+      expect(api.calls('/pay/status'), isNotEmpty);
+      checkout.elapse(const Duration(seconds: 60));
+      expect(controller.state, CheckoutState.collectingDetails, reason: 'it never arrived');
+      checkout.end();
+    });
+  });
+
+  test('MM-13 handles refused payer codes (a refusal no code of this sheet led to)', () {
+    virtual((async) {
+      final api = payerOtpApi(
+        announced: false,
+        process: ['process-payer-otp-accepted-sandbox.json'],
+        status: 'status-pending-payer-otp-refused.json',
+      );
+      final checkout = Checkout(async, api, locale: 'fr');
+      final controller = checkout.controller;
+      checkout.mobileMoney('70000000');
+      checkout.run(controller.payMobileMoney);
+      expect(controller.state, CheckoutState.approvalRequired, reason: 'charged without a code');
+      checkout.elapse(const Duration(seconds: 6));
+      expect((controller.state, controller.screen), (CheckoutState.collectingDetails, CheckoutScreen.form));
+      expect(controller.banner, "Votre opérateur n'a pas accepté ce code. Générez-en un nouveau et réessayez.");
+      expect(checkout.recorder.errors, isEmpty, reason: 'not a failure');
+      expect(controller.operatorBlock(controller.selectedChoice!), isNull, reason: 'still payable here');
+      checkout.end();
+    });
+
+    // Read through the status alone: the same words, never a raw {n}.
+    for (final language in ['en', 'fr']) {
+      final error = attemptEndedError(const PaymentStatusUpdate(status: 'pending', errorCode: 'invalid_otp'), language);
+      expect(error.message, ErrorCatalogue.text(ErrorCatalogue.payerOtpRefused, language));
+      expect(error.message, isNot(contains('{')));
+    }
+  });
+
+  test('MM-13 handles refused payer codes (the exhausted channel)', () {
+    virtual((async) {
+      final api = payerOtpApi(process: ['process-402-payer-otp-attempts-exceeded.json']);
+      final checkout = Checkout(async, api);
+      final controller = checkout.controller;
+      checkout.mobileMoney('70000000');
+      checkout.run(controller.payMobileMoney);
+      checkout.run(() => controller.submitPayerOtp('654323'));
+      final text = ErrorCatalogue.text(ErrorCatalogue.lookup('otp_attempts_exceeded')!, 'en');
+      expect((controller.state, controller.banner), (CheckoutState.collectingDetails, text));
+      final orange = controller.selectedChoice!;
+      expect(controller.operatorBlock(orange)?.message, text, reason: 'shown disabled with that text');
+      expect(controller.announcedPayerOtp, isNull);
+
+      checkout.run(controller.payMobileMoney);
+      expect((controller.state, controller.screen), (CheckoutState.collectingDetails, CheckoutScreen.form),
+          reason: 'Pay never reopens the code screen there');
+      expect(controller.fieldErrors['data.operator'], text);
+      expect(api.calls('/pay/process'), hasLength(1));
+      checkout.end();
+    });
+
+    // Refused too many times while watching: the same.
+    virtual((async) {
+      final api = payerOtpApi(
+          process: ['process-payer-otp-accepted-sandbox.json'], status: pendingWith('otp_attempts_exceeded'));
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('70000000');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.run(() => checkout.controller.submitPayerOtp('123456'));
+      checkout.elapse(const Duration(seconds: 6));
+      expect(checkout.controller.state, CheckoutState.collectingDetails);
+      expect(checkout.controller.operatorBlock(checkout.controller.selectedChoice!), isNotNull);
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.collectingDetails);
+      expect(api.calls('/pay/process'), hasLength(1));
+      checkout.end();
+    });
+  });
+
+  test('MM-13 handles refused payer codes (instructions that leave things out)', () {
+    // A code asked without how to get it: unsupported, and nothing started.
+    virtual((async) {
+      final asked = fixtureBody('process-payer-otp-required.json')..remove('payer_otp');
+      final api = payerOtpApi(announced: false, process: [FakeAnswer(202, asked)]);
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('70000000');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.error?.code, 'unsupported_action');
+      expect(checkout.recorder.started, isNull, reason: 'nothing was charged');
+      checkout.run(checkout.controller.dismiss);
+      expect(api.calls('/pay/cancel'), hasLength(1), reason: 'the payment is released');
+    });
+
+    // A missing amount is none; steps as plain strings; an empty list is none.
+    final sparse = PayerOtpInstructions.fromJson({
+      'channel': 'bf.orange',
+      'ussd_code': ' *144*4*6# ',
+      'otp_length': 0,
+      'amount': '',
+      'currency': 'XOF',
+      'steps': {
+        'fr': <Object>[],
+        'en': ['Dial the code.', 42, null],
+      },
+      'reason': 'refused',
+      'attempts_remaining': -2,
+    })!;
+    expect((sparse.amount, sparse.amountText), (null, null), reason: 'never " XOF"');
+    expect(sparse.stepsFor('fr').map((s) => s.text), ['Dial the code.'], reason: 'an empty list counts as none');
+    expect(sparse.stepsFor('fr').single.template, isNull);
+    expect(sparse.otpLength, isNull);
+    expect(sparse.attemptsRemaining, 0, reason: 'none left');
+    expect(PayerOtpInstructions.fromJson({'ussd_code': '*144 *4*6 #'})!.dialUrl, 'tel:*144*4*6%23');
+    for (final (length, read) in [(-3, null), (0, null), (1, 1), (12, 12), (13, null), ('6', 6)]) {
+      expect(PayerOtpInstructions.fromJson({'otp_length': length})!.otpLength, read, reason: '$length');
+    }
+  });
+
+  test('MM-13 handles refused payer codes (the tries left stay)', () {
+    virtual((async) {
+      final api =
+          payerOtpApi(announced: false, process: ['process-payer-otp-required.json', 'process-payer-otp-refused.json']);
+      final checkout = Checkout(async, api);
+      final controller = checkout.controller;
+      checkout.mobileMoney('70000000');
+      checkout.run(controller.payMobileMoney);
+      checkout.run(() => controller.submitPayerOtp('654321'));
+      checkout.run(() => controller.submitPayerOtp('12'));
+      expect((controller.payerOtpNotice, controller.payerOtpAttemptsRemaining), (PayerOtpNotice.invalidLength, 2));
+      expect(api.calls('/pay/process'), hasLength(2));
+      checkout.end();
+    });
+  });
+
+  test('MM-13 handles refused payer codes (a security retry keeps the code)', () {
+    String sha(String text) => sha256.convert(utf8.encode(text)).toString();
+    Map<String, dynamic> withChallenge(String salt, int number) => fixtureBody('session-payer-otp-announced.json')
+      ..['altcha'] = {
+        'algorithm': 'SHA-256',
+        'challenge': sha('$salt$number'),
+        'salt': salt,
+        'signature': 'sig',
+        'maxnumber': 100,
+      };
+    virtual((async) {
+      final api = FakeApi(routes: {
+        'GET /pay/session': [FakeAnswer(200, withChallenge('s1', 7)), FakeAnswer(200, withChallenge('s2', 42))],
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': ['process-422-security-check-failed.json', 'process-payer-otp-accepted-sandbox.json'],
+        'GET /pay/status': 'status-processing.json',
+      });
+      final checkout = Checkout(async, api, altchaSolver: (c) async => solveAltcha(c));
+      final controller = checkout.controller;
+      checkout.mobileMoney('70000000');
+      checkout.run(controller.payMobileMoney);
+      checkout.run(() => controller.submitPayerOtp('123456'));
+      final bodies = api.bodies('/pay/process');
+      expect(bodies.map((b) => dataOf(b)['otp']), ['123456', '123456'], reason: 'the same code');
+      expect(bodies.map((b) => (dataOf(b)['altcha'] as Map)['number']), [7, 42], reason: 'a new challenge');
+      expect(controller.state, CheckoutState.approvalRequired);
+      expect(controller.payerOtpSent, isTrue, reason: 'the same flow afterwards');
+      expect(checkout.recorder.errors, isEmpty);
+      checkout.end();
+    });
+  });
+
+  test('CH-07 shows what the payer pays on the chosen channel (after a code step, and the limits)', () {
+    // Back on the form after a code step: the selection's amount again.
+    virtual((async) {
+      final asked = fixtureBody('process-payer-otp-required.json')
+        ..['transaction'] = fixtureBody('session-payer-fee-per-channel.json')['transaction'];
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-payer-fee-per-channel.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': [FakeAnswer(202, asked), 'process-payer-fee-on-channel-sandbox.json'],
+        'GET /pay/status': 'status-pending-payer-otp-refused.json',
+      });
+      final checkout = Checkout(async, api);
+      final controller = checkout.controller;
+      checkout.mobileMoney('690000000');
+      checkout.run(controller.payMobileMoney);
+      expect(controller.state, CheckoutState.payerOtpRequired);
+      checkout.run(() => controller.submitPayerOtp('123456'));
+      expect(controller.amountToPay, 10450, reason: 'what the charge took');
+      checkout.elapse(const Duration(seconds: 6));
+      expect(controller.state, CheckoutState.payerOtpRequired, reason: 'refused later');
+      controller.leavePayerOtp();
+      controller.pickOperator('mtn');
+      expect(controller.amountToPay, 10200, reason: "the selection's, not the attempt's");
+      controller.backToMethods();
+      expect(controller.amountToPay, 10200);
+      checkout.end();
+    });
+
+    // CH-05: the chosen operator's total against its channel's limits.
+    virtual((async) {
+      final session = fixtureBody('session-payer-fee-per-channel.json');
+      ((session['channels'] as List).first as Map)['max_amount'] = 10300;
+      final api = FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+      });
+      final checkout = Checkout(async, api);
+      final controller = checkout.controller;
+      expect(checkout.method(MethodFamily.mobileMoney).enabled, isTrue, reason: 'MTN is within it');
+      checkout.mobileMoney('670000000');
+      expect(controller.operatorBlock(controller.selectedChoice!), isNull);
+      final orange = controller.choices.firstWhere((c) => c.id == 'orange');
+      expect(controller.operatorBlock(orange)?.limit?.amount, 10300, reason: '10 450 is over 10 300');
+      controller.pickOperator('orange');
+      expect(controller.selectedOperatorId, 'mtn', reason: 'not offered');
+      controller.setPhone('690000000');
+      expect(controller.selectedOperatorId, 'orange', reason: 'the number names it');
+      checkout.run(controller.payMobileMoney);
+      expect(api.calls('/pay/process'), isEmpty);
       checkout.end();
     });
   });

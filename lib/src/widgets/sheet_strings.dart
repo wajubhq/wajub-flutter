@@ -63,13 +63,14 @@ class SheetStrings {
 
   /// The code screen's own words: `title`, `description`, `dial`, `copy`,
   /// `copied`, `amount`, `stepsTitle`, `codeLabel`, `submit`, `changeMethod`,
-  /// `approval`, `refused`.
+  /// `approval`.
   String payerOtp(String key) => _texts['payerOtp.$key']!;
 
-  /// The three steps shown when the operator's own are not known.
-  List<String> payerOtpGenericSteps(String amount) => [
+  /// The three steps shown when the operator's own are not known; [amount]
+  /// null when it is not known either.
+  List<String> payerOtpGenericSteps(String? amount) => [
         _texts['payerOtp.generic1']!,
-        _fill('payerOtp.generic2', {'amount': amount}),
+        amount == null ? _texts['payerOtp.generic2NoAmount']! : _fill('payerOtp.generic2', {'amount': amount}),
         _texts['payerOtp.generic3']!,
       ];
 
@@ -186,6 +187,7 @@ class SheetStrings {
     'payerOtp.stepsTitle': 'How to get your code',
     'payerOtp.generic1': "Open your operator's Mobile Money menu (USSD code or app).",
     'payerOtp.generic2': 'Generate a payment code for the exact amount: {amount}.',
+    'payerOtp.generic2NoAmount': 'Generate a payment code for the exact amount of the payment.',
     'payerOtp.generic3': 'Enter the code you received below.',
     'payerOtp.codeLabel': 'Payment code',
     'payerOtp.submit': 'Confirm payment',
@@ -200,7 +202,6 @@ class SheetStrings {
     'payerOtp.attemptsN': '{count} tries left.',
     'payerOtp.length': 'The code must have {length} digits.',
     'payerOtp.lengthRange': 'The code must have between {min} and {max} digits.',
-    'payerOtp.refused': 'Your operator did not accept this code. Generate a new one and try again.',
   });
 
   static const fr = SheetStrings._('fr', {
@@ -288,6 +289,7 @@ class SheetStrings {
     'payerOtp.stepsTitle': 'Comment obtenir votre code',
     'payerOtp.generic1': 'Ouvrez le menu Mobile Money de votre opérateur (code USSD ou application).',
     'payerOtp.generic2': 'Générez un code de paiement pour le montant exact : {amount}.',
+    'payerOtp.generic2NoAmount': 'Générez un code de paiement pour le montant exact du paiement.',
     'payerOtp.generic3': 'Saisissez ci-dessous le code que vous avez reçu.',
     'payerOtp.codeLabel': 'Code de paiement',
     'payerOtp.submit': 'Valider le paiement',
@@ -303,7 +305,6 @@ class SheetStrings {
     'payerOtp.attemptsN': 'Il vous reste {count} essais.',
     'payerOtp.length': 'Le code doit comporter {length} chiffres.',
     'payerOtp.lengthRange': 'Le code doit comporter entre {min} et {max} chiffres.',
-    'payerOtp.refused': "Votre opérateur n'a pas accepté ce code. Générez-en un nouveau et réessayez.",
   });
 
   /// `fr`, `fr-CM`, `fr_CI` read French; anything else, or nothing, English.

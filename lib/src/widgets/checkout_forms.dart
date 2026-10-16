@@ -166,6 +166,8 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
     final errors = controller.fieldErrors;
     final showList = controller.showOperatorList;
     final badge = showList ? null : controller.badgeOperator;
+    final selected = controller.selectedChoice;
+    final selectedBlock = selected == null ? null : _blockText(controller, strings, controller.operatorBlock(selected));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -210,7 +212,10 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
               _OperatorTile(
                 choice: choice,
                 selected: choice.id == controller.selectedOperatorId,
-                onTap: controller.busy ? null : () => controller.pickOperator(choice.id),
+                note: _blockText(controller, strings, controller.operatorBlock(choice)),
+                onTap: controller.busy || controller.operatorBlock(choice) != null
+                    ? null
+                    : () => controller.pickOperator(choice.id),
               ),
               SizedBox(height: theme.spacingUnit * 2),
             ],
@@ -256,6 +261,14 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
             ),
           ),
         SizedBox(height: theme.gapRow),
+        if (selectedBlock != null) ...[
+          Text(
+            selectedBlock,
+            key: const ValueKey('wajub-operator-blocked'),
+            style: TextStyle(color: colors.danger, fontSize: theme.fontSizeLabel),
+          ),
+          SizedBox(height: theme.gapRow),
+        ],
         if (controller.announcedPayerOtp case final announced?) ...[
           Text(
             strings.payerOtpFormHint(announced.ussdCode),
@@ -267,10 +280,20 @@ class _MobileMoneyFormState extends State<MobileMoneyForm> {
         _PayButton(
           controller: controller,
           label: strings.pay(_amount(controller)),
-          onPressed: choices.isEmpty ? null : () => unawaited(controller.payMobileMoney()),
+          onPressed: choices.isEmpty || selectedBlock != null ? null : () => unawaited(controller.payMobileMoney()),
         ),
       ],
     );
+  }
+
+  /// Why an operator cannot take the payment, in words.
+  static String? _blockText(CheckoutController controller, SheetStrings strings, OperatorBlock? block) {
+    if (block == null) return null;
+    final limit = block.limit;
+    if (limit == null) return block.message;
+    return (limit.minimum
+        ? strings.minimum
+        : strings.maximum)(formatAmount(limit.amount, limit.currency, controller.language));
   }
 
   String _operatorUnavailable(String language) =>
@@ -287,17 +310,20 @@ class _PhoneFormatter extends TextInputFormatter {
 }
 
 class _OperatorTile extends StatelessWidget {
-  const _OperatorTile({required this.choice, required this.selected, required this.onTap});
+  const _OperatorTile({required this.choice, required this.selected, required this.onTap, this.note});
 
   final OperatorChoice choice;
   final bool selected;
   final VoidCallback? onTap;
 
+  /// Why it cannot take the payment: the tile is then disabled.
+  final String? note;
+
   @override
   Widget build(BuildContext context) {
     final theme = WajubTheme.of(context);
     final colors = theme.colors;
-    return Material(
+    final tile = Material(
       color: selected ? colors.selectedBackground : colors.inputBackground,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(theme.radius),
@@ -317,10 +343,17 @@ class _OperatorTile extends StatelessWidget {
                 OperatorLogo(choice: choice),
                 SizedBox(width: theme.spacingUnit * 3),
                 Expanded(
-                  child: Text(
-                    choice.label,
-                    style:
-                        TextStyle(color: colors.text, fontSize: theme.fontSizeBase, fontWeight: theme.fontWeightMedium),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        choice.label,
+                        style: TextStyle(
+                            color: colors.text, fontSize: theme.fontSizeBase, fontWeight: theme.fontWeightMedium),
+                      ),
+                      if (note != null)
+                        Text(note!, style: TextStyle(color: colors.textSecondary, fontSize: theme.fontSizeHint)),
+                    ],
                   ),
                 ),
                 Icon(
@@ -333,6 +366,7 @@ class _OperatorTile extends StatelessWidget {
         ),
       ),
     );
+    return note == null ? tile : Opacity(opacity: theme.disabledOpacity, child: tile);
   }
 }
 
@@ -805,7 +839,7 @@ class _PayerOtpFormState extends State<PayerOtpForm> {
     final attempts = controller.payerOtpAttemptsRemaining;
     final error = switch (controller.payerOtpNotice) {
       PayerOtpNotice.invalidLength => strings.payerOtpLength(instructions.otpLength),
-      PayerOtpNotice.refused => strings.payerOtp('refused'),
+      PayerOtpNotice.refused => ErrorCatalogue.text(ErrorCatalogue.payerOtpRefused, controller.language),
       null => null,
     };
     final label =
@@ -832,8 +866,7 @@ class _PayerOtpFormState extends State<PayerOtpForm> {
 
     final lines = steps.isEmpty
         ? [
-            for (final text in strings.payerOtpGenericSteps('${instructions.amount} ${instructions.currency}'))
-              TextSpan(text: text),
+            for (final text in strings.payerOtpGenericSteps(instructions.amountText)) TextSpan(text: text),
           ]
         : [
             for (final step in steps) TextSpan(children: [for (final p in instructions.parts(step)) part(p)]),
@@ -877,15 +910,17 @@ class _PayerOtpFormState extends State<PayerOtpForm> {
           ),
           SizedBox(height: unit * 2),
         ],
-        block(
-          strings.payerOtp('amount'),
-          Text(
-            '${instructions.amount} ${instructions.currency}',
-            key: const ValueKey('wajub-payer-otp-amount'),
-            style: strong.copyWith(fontSize: theme.fontSizeBase * 1.25),
+        if (instructions.amountText case final amount?) ...[
+          block(
+            strings.payerOtp('amount'),
+            Text(
+              amount,
+              key: const ValueKey('wajub-payer-otp-amount'),
+              style: strong.copyWith(fontSize: theme.fontSizeBase * 1.25),
+            ),
           ),
-        ),
-        SizedBox(height: theme.gapRow),
+          SizedBox(height: theme.gapRow),
+        ],
         Text(strings.payerOtp('stepsTitle'), style: label),
         SizedBox(height: unit),
         for (final (index, line) in lines.indexed) ...[
@@ -1087,7 +1122,7 @@ class _CodeBoxesState extends State<_CodeBoxes> {
                   inputFormatters: [
                     const AsciiDigitsFormatter(),
                     FilteringTextInputFormatter.digitsOnly,
-                    const _PastedCodeReplaces(),
+                    _PastedCodeReplaces(widget.length),
                     LengthLimitingTextInputFormatter(widget.length),
                   ],
                   decoration: const InputDecoration.collapsed(hintText: null),
@@ -1105,15 +1140,19 @@ class _CodeBoxesState extends State<_CodeBoxes> {
   }
 }
 
-/// A code pasted or autofilled over digits already typed replaces them.
+/// A whole code pasted or autofilled after digits already typed replaces
+/// them; a shorter paste completes them.
 class _PastedCodeReplaces extends TextInputFormatter {
-  const _PastedCodeReplaces();
+  const _PastedCodeReplaces(this.length);
+
+  final int length;
 
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
     final old = oldValue.text;
-    if (old.isEmpty || newValue.text.length - old.length < 2 || !newValue.text.startsWith(old)) return newValue;
+    if (old.isEmpty || !newValue.text.startsWith(old)) return newValue;
     final pasted = newValue.text.substring(old.length);
+    if (pasted.length < length) return newValue;
     return TextEditingValue(text: pasted, selection: TextSelection.collapsed(offset: pasted.length));
   }
 }

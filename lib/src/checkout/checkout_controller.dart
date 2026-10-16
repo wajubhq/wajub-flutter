@@ -76,6 +76,16 @@ enum PayerOtpNotice {
   refused,
 }
 
+/// Why an operator of the Mobile Money form cannot take the payment: a
+/// [message] to show, or the [limit] its channel puts on what the payer
+/// would pay there.
+class OperatorBlock {
+  const OperatorBlock({this.message, this.limit});
+
+  final String? message;
+  final MethodLimit? limit;
+}
+
 /// The checkout's state machine: loads the session, offers
 /// the methods, submits, follows the payment, and reports through the
 /// [CheckoutCallbacks] until [result] settles, exactly once. The payment
@@ -360,8 +370,34 @@ class CheckoutController extends ChangeNotifier {
   /// channel says so (never an aggregate's member).
   PayerOtpInstructions? get announcedPayerOtp {
     if (_method?.family != MethodFamily.mobileMoney) return null;
-    final choice = _choices.where((c) => c.id == _selectedId).firstOrNull;
-    return choice == null || choice.viaAggregate ? null : choice.payerOtp;
+    final choice = selectedChoice;
+    if (choice == null || choice.viaAggregate || operatorBlock(choice) != null) return null;
+    return choice.payerOtp;
+  }
+
+  /// The channels whose operator refused too many of this payment's codes
+  /// (their own slug, or an aggregate member's).
+  final _exhaustedChannels = <String>{};
+
+  /// The operator choice the last Mobile Money charge went through (its
+  /// `configSlug`).
+  String? _chargedChoice;
+
+  /// The operator selected in the Mobile Money form.
+  OperatorChoice? get selectedChoice => _choices.where((c) => c.id == _selectedId).firstOrNull;
+
+  /// Why [choice] cannot take this payment, or null when it can: its
+  /// operator refused too many codes, or what the payer would pay there is
+  /// out of its channel's limits.
+  OperatorBlock? operatorBlock(OperatorChoice choice) {
+    if (_exhaustedChannels.contains(choice.configSlug)) {
+      return OperatorBlock(message: ErrorCatalogue.text(ErrorCatalogue.lookup(_payerOtpExhausted)!, language));
+    }
+    final channel = _method?.channels.where((c) => c.slug == choice.channelSlug).firstOrNull;
+    final transaction = _session?.transaction;
+    if (channel == null || transaction == null) return null;
+    final limit = channelLimit(channel, choice.amountTotal ?? transaction.payableAmount, transaction.currency);
+    return limit == null ? null : OperatorBlock(limit: limit);
   }
 
   // ── What the payer pays ──────────────────────────────────────────────────
@@ -774,7 +810,8 @@ class CheckoutController extends ChangeNotifier {
 
   /// The payer picked an operator: detection never overrides it.
   void pickOperator(String id) {
-    if (_busy || !_choices.any((choice) => choice.id == id)) return;
+    final choice = _choices.where((c) => c.id == id).firstOrNull;
+    if (_busy || choice == null || operatorBlock(choice) != null) return;
     _selectedId = id;
     _pickedByHand = true;
     _clearMessages();
@@ -886,6 +923,16 @@ class CheckoutController extends ChangeNotifier {
       return;
     }
     final choice = _choices.firstWhere((c) => c.id == _selectedId);
+    if (operatorBlock(choice) case final block?) {
+      // Not offered for this payment: the form says why, nothing is sent.
+      if (block.message case final message?) {
+        _formError('data.operator', message);
+      } else {
+        notifyListeners();
+      }
+      return;
+    }
+    _chargedChoice = choice.configSlug;
     final request = MobileMoneyRules.requestData(
       data: data,
       phone: _phone,
@@ -1117,10 +1164,19 @@ class CheckoutController extends ChangeNotifier {
 
   /// A 2xx of `/pay/process` or `/pay/client-session`.
   void _onAnswer(RawProcessResponse raw, MethodFamily family, String channel) {
-    final payerOtp = raw.action == 'payer_otp' ? raw.payerOtp : null;
-    final charge = _lastCharge;
-    if (payerOtp != null && charge != null && charge.$1 == channel) {
-      _onPayerOtpAsked(raw, payerOtp, charge);
+    if (raw.action == 'payer_otp') {
+      final payerOtp = raw.payerOtp;
+      final charge = _lastCharge;
+      if (payerOtp != null && charge != null && charge.$1 == channel) {
+        _onPayerOtpAsked(raw, payerOtp, charge);
+        return;
+      }
+      // A code is asked without how to get it: this sheet cannot go on, but
+      // nothing was charged and no payment started.
+      _unansweredKey = null;
+      _unansweredPath = null;
+      if (raw.transaction case final transaction?) _transaction = _adopt(transaction);
+      _fail(WajubError.of(PaymentMapper.unsupportedActionCode, language: language));
       return;
     }
     _paymentStarted(family, channel);
@@ -1286,7 +1342,7 @@ class CheckoutController extends ChangeNotifier {
         _retryAt = clock.now().add(Duration(seconds: error.retryAfterSeconds ?? 60));
         _fail(error);
       case 402 when error.code == _payerOtpExhausted:
-        _backToFormWith(error);
+        _backToFormWith(error, exhausted: true);
       default:
         _fail(error);
     }
@@ -1648,7 +1704,15 @@ class CheckoutController extends ChangeNotifier {
     _unansweredKey = null;
     _unansweredPath = null;
     final transaction = raw.transaction;
-    if (transaction != null) _transaction = _adopt(transaction);
+    if (transaction != null) {
+      _transaction = _adopt(transaction);
+      if (transaction.errorCodeKnown) {
+        // A refused code is now the payment's last refusal: a status still
+        // carrying it later is not a new one.
+        _lastErrorCode = transaction.errorCode;
+        _baselineKnown = true;
+      }
+    }
     final (notice, attempts) = switch (instructions.reason) {
       'invalid' => (PayerOtpNotice.invalidLength, null),
       'refused' => (PayerOtpNotice.refused, instructions.attemptsRemaining),
@@ -1673,8 +1737,8 @@ class CheckoutController extends ChangeNotifier {
     }
     code = asciiDigits(code.trim());
     if (!instructions.accepts(code)) {
+      // The tries left, if shown, stay: a code not sent does not count.
       _payerOtpNotice = PayerOtpNotice.invalidLength;
-      _payerOtpAttempts = null;
       notifyListeners();
       return;
     }
@@ -1719,9 +1783,16 @@ class CheckoutController extends ChangeNotifier {
     _showPayerOtp(_payerOtp!, _payerOtpCharge!, notice: PayerOtpNotice.refused);
   }
 
-  /// Back to the form with [error] above it: this payment method can no
-  /// longer take the payment, another one can.
-  void _backToFormWith(WajubError error) {
+  /// Back to the form with [error] above it, reported to `onError` when
+  /// [report]. [exhausted]: the operator refused too many codes, and the
+  /// channel the code was for is not offered again for this payment.
+  void _backToFormWith(WajubError error, {bool report = true, bool exhausted = false}) {
+    if (exhausted) {
+      _exhaustedChannels.addAll([
+        if (_payerOtp?.channel case final channel? when channel.isNotEmpty) channel,
+        if (_chargedChoice case final slug?) slug,
+      ]);
+    }
     _attempt++;
     _watcher?.stop();
     _pendingAgain();
@@ -1736,7 +1807,7 @@ class CheckoutController extends ChangeNotifier {
     _fieldErrors = const {};
     _banner = error.message;
     _enter(CheckoutState.collectingDetails, CheckoutScreen.form);
-    _call(() => _callbacks.onError?.call(error));
+    if (report) _call(() => _callbacks.onError?.call(error));
   }
 
   // ── Watching ────────────────────────────────────────────────
@@ -1808,14 +1879,20 @@ class CheckoutController extends ChangeNotifier {
     _unansweredPath = null;
     // An outcome, or a refusal: the attempt is decided (the cap is not).
     if (decision.verdict != WatchVerdict.capped) _acceptedUndecided = false;
-    if (_payerOtpSent && _payerOtp != null && decision.verdict == WatchVerdict.failed && status == 'pending') {
-      // The operator refused the code once it had it.
-      if (code == 'invalid_otp') {
+    if (decision.verdict == WatchVerdict.failed && status == 'pending') {
+      final codeSent = _payerOtpSent && _payerOtp != null;
+      if (code == 'invalid_otp' && codeSent) {
+        // The operator refused the code once it had it.
         _payerOtpRefusedLater();
         return;
       }
+      if (code == 'invalid_otp') {
+        // A code sent from elsewhere: the payment is still payable here.
+        _backToFormWith(decision.error!, report: false);
+        return;
+      }
       if (code == _payerOtpExhausted) {
-        _backToFormWith(decision.error!);
+        _backToFormWith(decision.error!, exhausted: true);
         return;
       }
     }
