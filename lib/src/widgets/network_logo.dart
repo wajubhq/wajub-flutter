@@ -5,17 +5,44 @@ import 'package:http/http.dart' as http;
 
 /// A logo from the network, SVG (the API's operator logos are) or bitmap,
 /// with [fallback] while it is missing: not loaded yet, not found, or not an
-/// image. Each URL is fetched once per run of the app.
+/// image. When [url] cannot be drawn, [fallbackUrl] (the logo's PNG) is
+/// tried before [fallback]. Each URL is fetched once per run of the app.
 class NetworkLogo extends StatefulWidget {
   const NetworkLogo({
     super.key,
     required this.url,
+    this.fallbackUrl,
     required this.width,
     required this.height,
     required this.fallback,
   });
 
+  /// [url] and [fallbackUrl] from a channel's or an operator's `logo` and
+  /// `logo_png`; null when it has neither.
+  static NetworkLogo? of({
+    Key? key,
+    required String? logo,
+    required String? logoPng,
+    required double width,
+    required double height,
+    required Widget fallback,
+  }) {
+    final url = logo ?? logoPng;
+    if (url == null) return null;
+    return NetworkLogo(
+      key: key,
+      url: url,
+      fallbackUrl: url == logoPng ? null : logoPng,
+      width: width,
+      height: height,
+      fallback: fallback,
+    );
+  }
+
   final String url;
+
+  /// Tried when [url] does not load or cannot be drawn.
+  final String? fallbackUrl;
   final double width;
   final double height;
 
@@ -65,19 +92,28 @@ class _NetworkLogoState extends State<NetworkLogo> {
     return head.startsWith('<svg') || (head.startsWith('<?xml') && head.contains('<svg'));
   }
 
+  /// The [fallbackUrl], else the [fallback].
+  Widget _failed() {
+    final next = widget.fallbackUrl;
+    if (next == null) return widget.fallback;
+    return NetworkLogo(url: next, width: widget.width, height: widget.height, fallback: widget.fallback);
+  }
+
   @override
   Widget build(BuildContext context) => FutureBuilder<Uint8List?>(
         future: _bytes,
         builder: (context, snapshot) {
           final bytes = snapshot.data;
-          if (bytes == null) return widget.fallback;
+          if (bytes == null) {
+            return snapshot.connectionState == ConnectionState.done ? _failed() : widget.fallback;
+          }
           if (_isSvg(bytes)) {
             return SvgPicture.memory(
               bytes,
               width: widget.width,
               height: widget.height,
               fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => widget.fallback,
+              errorBuilder: (_, __, ___) => _failed(),
             );
           }
           return Image.memory(
@@ -85,7 +121,7 @@ class _NetworkLogoState extends State<NetworkLogo> {
             width: widget.width,
             height: widget.height,
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => widget.fallback,
+            errorBuilder: (_, __, ___) => _failed(),
           );
         },
       );

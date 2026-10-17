@@ -2,7 +2,8 @@ import 'models/payment_result.dart';
 import 'wajub_session.dart';
 import 'adapters/hosted_redirect.dart';
 
-/// Opens redirect / 3DS / confirm URLs in the system browser — never WebView.
+/// Opens the page a [PaymentRequiresAction] asks for in the system browser,
+/// and returns [result].
 Future<PaymentResult> handlePaymentAction(
   WajubSession session,
   PaymentResult result,
@@ -18,5 +19,5 @@ Future<PaymentResult> handlePaymentAction(
   return result;
 }
 
-/// Direct open for sdk-config `hosted_redirect` URLs.
+/// Opens [url] in the system browser.
 Future<bool> openHostedRedirectUrl(String url) => HostedRedirect.open(url);

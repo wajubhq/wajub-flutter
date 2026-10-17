@@ -32,7 +32,7 @@ class WatchDecision {
   final WajubError? error;
 }
 
-/// What one status says about the attempt (spec README §13.2), or null to
+/// What one status says about the attempt, or null to
 /// keep watching. A `pending` counts only once the attempt was seen
 /// `processing`: before that it is the previous attempt's leftover. An answer
 /// without a status says nothing.
@@ -63,7 +63,9 @@ WatchDecision? decideStatus(PaymentStatusUpdate update, {required bool seenProce
 WajubError attemptEndedError(PaymentStatusUpdate update, String language) {
   final code = update.errorCode;
   if (code == null) return WajubError.of('payment_attempt_ended', language: language);
-  final entry = ErrorCatalogue.lookup(code);
+  // On a payment, `invalid_otp` is the operator refusing the payer's own
+  // code, not a confirmation step's wrong code.
+  final entry = code == 'invalid_otp' ? ErrorCatalogue.payerOtpRefused : ErrorCatalogue.lookup(code);
   return WajubError(
     type: entry?.type ?? WajubErrorType.paymentError,
     message: entry != null
@@ -78,7 +80,7 @@ WajubError attemptEndedError(PaymentStatusUpdate update, String language) {
   );
 }
 
-/// Follows one payment attempt to its outcome (spec README §13): polls
+/// Follows one payment attempt to its outcome: polls
 /// `GET /pay/status` — every 5 s, slowing ×1.5 up to 15 s after 2 minutes
 /// without a change, every 15 s while the realtime socket is joined, backing
 /// off on errors — and listens to the payment's channel when the session has

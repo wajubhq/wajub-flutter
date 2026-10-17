@@ -1,16 +1,24 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:url_launcher_platform_interface/link.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 import 'package:wajub_mobile/src/adapters/hosted_redirect.dart';
 import 'package:wajub_mobile/src/appearance/appearance.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
+import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
 import 'package:wajub_mobile/src/checkout/present_options.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/wajub_error.dart';
+import 'package:wajub_mobile/src/widgets/network_logo.dart';
 import 'package:wajub_mobile/src/widgets/present.dart';
 
 import '../support/fake_api.dart';
@@ -60,6 +68,13 @@ FakeApi sandboxApi({Object status = 'status-processing.json'}) => FakeApi(routes
       'GET /pay/status': status,
       'POST /pay/cancel': 'cancel-200.json',
     });
+
+/// Scrolls [finder] into the sheet's view, then taps it.
+Future<void> tapShown(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.tap(finder);
+}
 
 class FakeLauncher extends UrlLauncherPlatform {
   final launches = <(String, PreferredLaunchMode)>[];
@@ -318,6 +333,117 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('the phone field takes Arabic-Indic digits and shows them as 0-9', (tester) async {
+    final sheet = Sheet(FakeApi(routes: {
+      'GET /pay/session': 'session-cm-aggregate.json',
+      'GET /pay/sdk-config': 'sdk-config-cm-stripe.json',
+    }));
+    await sheet.open(tester);
+    await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '٦٧٧١٢٣٤٥٦');
+    await tester.pump();
+    expect(find.text('67 71 23 45 6'), findsOneWidget, reason: 'shown as the digits they are');
+    expect(sheet.controller.phone, '67 71 23 45 6');
+    expect(sheet.controller.selectedOperatorId, 'mtn', reason: 'its operator recognised');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the OTP screen says where the code was sent, and nothing when the provider names nowhere',
+      (tester) async {
+    for (final (contact, shown) in [
+      ('080******78', 'Enter the code sent to 080******78.'),
+      ('', null),
+      ('Please enter the OTP sent to 080******78', 'Enter the code sent to 080******78.'),
+    ]) {
+      final otp = fixtureBody('process-requires-otp.json')..['otp_masked_contact'] = contact;
+      final sheet = Sheet(
+        FakeApi(routes: {
+          'GET /pay/session': 'session-cm-aggregate.json',
+          'GET /pay/sdk-config': 'sdk-config-card-mollie.json',
+          'POST /pay/process': FakeAnswer(202, otp),
+          'GET /pay/status': 'status-processing.json',
+        }),
+        options: const PresentOptions(sessionToken: 'tok_test', locale: 'en'),
+      );
+      await sheet.open(tester);
+      sheet.controller.selectMethod(sheet.controller.methods.firstWhere((m) => m.family == MethodFamily.card));
+      unawaited(sheet.controller.payCard());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('wajub-step-code')), findsOneWidget, reason: contact);
+      if (shown == null) {
+        expect(find.textContaining('sent to'), findsNothing, reason: 'an empty contact: the prompt alone');
+      } else {
+        expect(find.text(shown), findsOneWidget, reason: contact);
+        expect(find.textContaining('Please enter'), findsNothing, reason: "never the provider's sentence");
+      }
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
+  testWidgets('a confirmation code typed in Arabic-Indic digits shows as 0-9', (tester) async {
+    final sheet = Sheet(FakeApi(routes: {
+      'GET /pay/session': 'session-cm-aggregate.json',
+      'GET /pay/sdk-config': 'sdk-config-card-mollie.json',
+      'POST /pay/process': 'process-requires-otp.json',
+      'GET /pay/status': 'status-processing.json',
+    }));
+    await sheet.open(tester);
+    sheet.controller.selectMethod(sheet.controller.methods.firstWhere((m) => m.family == MethodFamily.card));
+    unawaited(sheet.controller.payCard());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const ValueKey('wajub-step-code')), '١٢٣٤٥٦');
+    await tester.pump();
+    expect(find.text('123456'), findsOneWidget, reason: 'the code as the payer typed it, in 0-9');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('CH-06 prefers logo_png where SVG cannot be drawn', (tester) async {
+    // Flutter draws SVG: `logo` first, `logo_png` when it does not load,
+    // the brand badge when neither does.
+    final png =
+        base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>';
+    Future<void> show(String session, String config, {required bool svgLoads}) async {
+      final fetched = <String>[];
+      NetworkLogo.clearCache();
+      await http.runWithClient(() async {
+        final sheet = Sheet(FakeApi(routes: {'GET /pay/session': session, 'GET /pay/sdk-config': config}));
+        await sheet.open(tester);
+        await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      },
+          () => MockClient((request) async {
+                fetched.add(request.url.toString());
+                final path = request.url.path;
+                if (path.endsWith('.png')) return http.Response.bytes(png, 200);
+                if (path.endsWith('.svg') && svgLoads) return http.Response(svg, 200);
+                return http.Response('', 404);
+              }));
+      final logo = find.byKey(const ValueKey('wajub-operator-logo-mtn'));
+      if (session == 'session-cm-aggregate.json' && !svgLoads) {
+        expect(fetched, contains('https://api.wajub.com/img/channels/momo.png'));
+        expect(find.descendant(of: logo, matching: find.byType(Image)), findsWidgets, reason: 'the PNG');
+      } else if (svgLoads) {
+        expect(fetched.where((url) => url.contains('/img/channels/') && url.endsWith('.png')), isEmpty,
+            reason: 'the SVG is kept');
+        expect(find.descendant(of: logo, matching: find.byType(SvgPicture)), findsWidgets);
+      } else {
+        expect(find.byKey(const ValueKey('wajub-operator-badge-mtn')), findsWidgets, reason: 'a 2.0 session: badge');
+      }
+      await tester.pumpWidget(const SizedBox());
+    }
+
+    await show('session-cm-aggregate.json', 'sdk-config-cm-stripe.json', svgLoads: false);
+    await show('session-cm-aggregate.json', 'sdk-config-cm-stripe.json', svgLoads: true);
+    await show('session-ci-xof-wallets.json', 'sdk-config-ci-wallets.json', svgLoads: false);
+    NetworkLogo.clearCache();
+  });
+
   testWidgets('a Mobile Money payment, from the operators to the success screen', (tester) async {
     final api = FakeApi(routes: {
       'GET /pay/session': 'session-cm-aggregate.json',
@@ -389,6 +515,336 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('CH-07 shows what the payer pays on the chosen channel (the sheet)', (tester) async {
+    final sheet = Sheet(FakeApi(routes: {
+      'GET /pay/session': 'session-payer-fee-per-channel.json',
+      'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+    }));
+    await sheet.open(tester);
+    String amount() => tester.widget<Text>(find.byKey(const ValueKey('wajub-amount'))).data!;
+    expect(amount(), '10,200 XAF');
+    await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Pay 10,200 XAF'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '690000000');
+    await tester.pump();
+    expect(find.text('Pay 10,450 XAF'), findsOneWidget, reason: 'the Orange number');
+    expect(amount(), '10,450 XAF', reason: 'the summary too');
+    sheet.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('MM-14 offers the operator\'s code to dial', (tester) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copied.add((call.arguments as Map)['text'] as String);
+      return null;
+    });
+    final session = fixtureBody('session-payer-otp-announced.json');
+    (((session['channels'] as List).first) as Map).remove('payer_otp');
+    final sheet = Sheet(FakeApi(routes: {
+      'GET /pay/session': FakeAnswer(200, session),
+      'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+      'POST /pay/process': 'process-payer-otp-required.json',
+    }));
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await sheet.open(tester);
+    await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '70000000');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('wajub-pay-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(sheet.controller.state, CheckoutState.payerOtpRequired);
+
+    // Android dials it from a link.
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-dial')));
+    await tester.pump();
+    expect(sheet.opened, ['tel:*144*4*6%23']);
+    // Every platform copies it.
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-copy')));
+    await tester.pump();
+    expect(copied, ['*144*4*6#']);
+    expect(find.text('Copied'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1900));
+    expect(find.text('Copied'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Copy'), findsOneWidget, reason: 'back after 2 s');
+    expect(find.text('Test mode: enter the code 123456. Any other code is refused.'), findsOneWidget);
+
+    // iOS refuses * and # in a tel: link: copy only.
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-copy')));
+    await tester.pump();
+    expect(copied, ['*144*4*6#', '*144*4*6#']);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-dial')), findsNothing);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-ussd')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    debugDefaultTargetPlatformOverride = null;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    sheet.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the payer code screen shows how to get the code and takes it', (tester) async {
+    final sheet = Sheet(
+      FakeApi(routes: {
+        'GET /pay/session': 'session-payer-otp-announced.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': ['process-payer-otp-refused.json', 'process-payer-otp-accepted-sandbox.json'],
+        'GET /pay/status': 'status-processing.json',
+      }),
+      options: PresentOptions(sessionToken: 'tok_test', locale: 'fr', callbacks: Recorder().callbacks),
+    );
+    await sheet.open(tester);
+    await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '70000000');
+    await tester.pump();
+    expect(find.text("Pour ce paiement, vous générerez un code en composant *144*4*6# : l'étape suivante vous guide."),
+        findsOneWidget,
+        reason: 'the form hint of an announced channel');
+    await tester.tap(find.byKey(const ValueKey('wajub-pay-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(sheet.api.calls('/pay/process'), isEmpty);
+
+    expect(find.text('Générez votre code de paiement'), findsOneWidget);
+    expect(find.text('Code à composer'), findsOneWidget);
+    expect(find.text('Montant exact à saisir'), findsOneWidget);
+    expect(find.text('1000 XOF'), findsOneWidget, reason: 'exactly as sent');
+    expect(find.text('Comment obtenir votre code'), findsOneWidget);
+    expect(find.text('Sur le téléphone du compte Orange Money, composez *144*4*6#.'), findsOneWidget);
+    expect(find.text('Saisissez le montant exact : 1000 XOF.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-step-3')), findsOneWidget);
+    expect(find.text('Mode test : saisissez le code 123456. Tout autre code est refusé.'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const ValueKey('wajub-payer-otp-code')), '12345');
+    await tester.pump();
+    expect(find.text('12345'), findsOneWidget, reason: 'no automatic submission');
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-submit')));
+    await tester.pump();
+    expect(find.text('Le code doit comporter 6 chiffres.'), findsOneWidget);
+    expect(sheet.api.calls('/pay/process'), isEmpty);
+
+    await tester.enterText(find.byKey(const ValueKey('wajub-payer-otp-code')), '6543217');
+    await tester.pump();
+    expect(find.text('654321'), findsOneWidget, reason: 'no more than 6 digits');
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-submit')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text("Votre opérateur n'a pas accepté ce code. Générez-en un nouveau et réessayez."), findsOneWidget);
+    expect(find.text('Il vous reste 2 essais.'), findsOneWidget);
+    expect(find.text('654321'), findsNothing, reason: 'the field emptied');
+
+    await tester.enterText(find.byKey(const ValueKey('wajub-payer-otp-code')), '123456');
+    await tester.pump();
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-submit')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(sheet.controller.state, CheckoutState.approvalRequired);
+    expect(find.text('Code reçu. Votre opérateur traite le paiement, cela peut prendre quelques instants.'),
+        findsOneWidget);
+    sheet.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('MM-13 handles refused payer codes (the sheet)', (tester) async {
+    Future<Sheet> codeScreen(Map<String, dynamic> session, List<Object> process) async {
+      final sheet = Sheet(FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': process,
+        'GET /pay/status': 'status-processing.json',
+      }));
+      await sheet.open(tester);
+      await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '70000000');
+      await tester.pump();
+      await tapShown(tester, find.byKey(const ValueKey('wajub-pay-button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      return sheet;
+    }
+
+    Map<String, dynamic> session({bool announced = true, String? amount = '1000', bool steps = true}) {
+      final body = fixtureBody('session-payer-otp-announced.json');
+      final channel = (body['channels'] as List).first as Map;
+      final otp = channel['payer_otp'] as Map;
+      if (amount == null) otp.remove('amount');
+      if (!steps) otp['steps'] = <String, Object>{};
+      if (!announced) channel.remove('payer_otp');
+      return body;
+    }
+
+    final code = find.byKey(const ValueKey('wajub-payer-otp-code'));
+    final submit = find.byKey(const ValueKey('wajub-payer-otp-submit'));
+
+    // Refused, then a code too short: the tries left stay. Accepted: no
+    // phone line on the approval screen.
+    final refused = await codeScreen(
+        session(announced: false), ['process-payer-otp-refused.json', 'process-payer-otp-accepted-sandbox.json']);
+    expect(find.text('Your operator did not accept this code. Generate a new one and try again.'), findsOneWidget);
+    expect(find.text('2 tries left.'), findsOneWidget);
+    await tester.ensureVisible(code);
+    await tester.enterText(code, '6');
+    await tester.pump();
+    expect(find.text('Your operator did not accept this code. Generate a new one and try again.'), findsNothing,
+        reason: 'gone once the payer types again');
+    expect(find.text('2 tries left.'), findsOneWidget);
+    await tester.enterText(code, '12');
+    await tapShown(tester, submit);
+    await tester.pump();
+    expect(find.text('The code must have 6 digits.'), findsOneWidget);
+    expect(find.text('2 tries left.'), findsOneWidget, reason: 'a code not sent does not count');
+    await tester.enterText(code, '123456');
+    await tapShown(tester, submit);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+        find.text('Code received. Your operator is processing the payment, this can take a moment.'), findsOneWidget);
+    expect(find.textContaining('+226'), findsNothing, reason: 'no phone line after a code');
+    refused.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+
+    // Too many refusals: the channel shown disabled with that error, Pay off.
+    final exhausted = await codeScreen(session(), ['process-402-payer-otp-attempts-exceeded.json']);
+    await tester.ensureVisible(code);
+    await tester.enterText(code, '654323');
+    await tapShown(tester, submit);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    const text = 'Your operator refused too many codes for this payment. Choose another payment method.';
+    expect(find.byKey(const ValueKey('wajub-banner')), findsOneWidget);
+    expect(find.text(text), findsNWidgets(2), reason: 'the banner and the disabled operator');
+    expect(tester.widget<FilledButton>(find.byKey(const ValueKey('wajub-pay-button'))).onPressed, isNull);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-hint')), findsNothing);
+    exhausted.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+
+    // No amount: no amount box, and the generic step without it.
+    final noAmount = await codeScreen(session(amount: null, steps: false), const []);
+    expect(find.text('Exact amount to enter'), findsNothing);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-amount')), findsNothing);
+    expect(find.text('Generate a payment code for the exact amount.'), findsOneWidget);
+    noAmount.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the payer code takes one box per digit: typing advances, backspace goes back, a paste fills them',
+      (tester) async {
+    Future<Sheet> codeScreen(int? length) async {
+      final session = fixtureBody('session-payer-otp-announced.json');
+      (((session['channels'] as List).first) as Map)['payer_otp']['otp_length'] = length;
+      final sheet = Sheet(FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+      }));
+      await sheet.open(tester);
+      await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '70000000');
+      await tester.pump();
+      await tapShown(tester, find.byKey(const ValueKey('wajub-pay-button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(sheet.controller.state, CheckoutState.payerOtpRequired);
+      return sheet;
+    }
+
+    final code = find.byKey(const ValueKey('wajub-payer-otp-code'));
+    List<String> boxes(int count) => [
+          for (var i = 0; i < count; i++)
+            tester
+                .widget<Text>(
+                    find.descendant(of: find.byKey(ValueKey('wajub-payer-otp-box-$i')), matching: find.byType(Text)))
+                .data!,
+        ];
+
+    final sheet = await codeScreen(6);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-box-5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-box-6')), findsNothing);
+    await tester.ensureVisible(code);
+    await tester.enterText(code, '١٢');
+    await tester.pump();
+    expect(boxes(6), ['1', '2', '', '', '', ''], reason: 'each digit in the next box, written 0-9');
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pump();
+    expect(boxes(6), ['1', '', '', '', '', ''], reason: 'backspace empties the last box');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      return switch (call.method) {
+        'Clipboard.getData' => {'text': '654 321'},
+        'Clipboard.hasStrings' => {'value': true},
+        _ => null,
+      };
+    });
+    await tester.longPress(code);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paste'));
+    await tester.pumpAndSettle();
+    expect(boxes(6), ['6', '5', '4', '3', '2', '1'], reason: 'a pasted code fills every box');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    await tester.enterText(code, '1654-321');
+    await tester.pump();
+    expect(boxes(6), ['6', '5', '4', '3', '2', '1'], reason: 'so does an autofilled one');
+    await tester.enterText(code, '6543219');
+    await tester.pump();
+    expect(boxes(6), ['6', '5', '4', '3', '2', '1'], reason: 'no seventh digit');
+    expect(sheet.controller.state, CheckoutState.payerOtpRequired, reason: 'no automatic submission');
+    expect(sheet.api.calls('/pay/process'), isEmpty);
+    sheet.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+
+    // Longer than 8 digits: one field.
+    final long = await codeScreen(10);
+    expect(find.byKey(const ValueKey('wajub-payer-otp-box-0')), findsNothing);
+    await tester.enterText(code, '12345678901');
+    await tester.pump();
+    expect(find.text('1234567890'), findsOneWidget);
+    long.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the payer code screen without steps shows the generic ones, and leaves for the form', (tester) async {
+    final session = fixtureBody('session-payer-otp-announced.json');
+    final otp = (((session['channels'] as List).first) as Map)['payer_otp'] as Map;
+    otp['steps'] = <String, Object>{};
+    otp['ussd_code'] = null;
+    otp['otp_length'] = null;
+    final sheet = Sheet(FakeApi(routes: {
+      'GET /pay/session': FakeAnswer(200, session),
+      'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+    }));
+    await sheet.open(tester);
+    await tester.tap(find.byKey(const ValueKey('wajub-method-mobile_money')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const ValueKey('wajub-phone-field')), '70000000');
+    await tester.pump();
+    expect(find.text("For this payment, you will generate a code from your operator's menu: the next step guides you."),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('wajub-pay-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Code to dial'), findsNothing);
+    expect(find.text("Open your operator's Mobile Money menu (USSD code or app)."), findsOneWidget);
+    expect(find.text('Generate a payment code for the exact amount: 1000 XOF.'), findsOneWidget);
+    expect(find.text('Enter the code you received below.'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('wajub-payer-otp-code')), '123');
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-submit')));
+    await tester.pump();
+    expect(find.text('The code must have between 4 and 8 digits.'), findsOneWidget);
+
+    await tapShown(tester, find.byKey(const ValueKey('wajub-payer-otp-change')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(sheet.controller.state, CheckoutState.collectingDetails);
+    expect(find.byKey(const ValueKey('wajub-phone-field')), findsOneWidget);
+    sheet.controller.hostGone();
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('ST-01 reports Wajub.js states', () {
     expect(CheckoutState.values.map((s) => s.wireName), [
       'INITIATED',
@@ -408,11 +864,13 @@ void main() {
       'FAILED',
       'EXPIRED',
       'CANCELLED',
+      'PAYER_OTP_REQUIRED',
     ]);
     for (final (process, state) in [
       ('process-processing-mobile-money-sandbox.json', CheckoutState.approvalRequired),
       ('process-requires-otp.json', CheckoutState.otpRequired),
       ('process-redirect-card-hosted.json', CheckoutState.pending),
+      ('process-payer-otp-required.json', CheckoutState.payerOtpRequired),
     ]) {
       virtual((async) {
         final api = sandboxApi()..on('POST /pay/process', process);
@@ -499,6 +957,23 @@ void main() {
     });
     final fee = SessionData.fromJson(fixtureBody('session-payer-bears-fee.json')).transaction;
     expect(PaymentSuccess.from(fee, method: 'unknown').amount, 10350, reason: 'amount_total');
+
+    // The channel's price: what the charge took, not what the session said.
+    virtual((async) {
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-payer-fee-per-channel.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': 'process-payer-fee-on-channel-sandbox.json',
+        'GET /pay/status': 'status-succeeded.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('690000000');
+      checkout.run(checkout.controller.payMobileMoney);
+      checkout.elapse(const Duration(seconds: 6));
+      expect(checkout.recorder.success?.amount, 10450, reason: 'not 10 200');
+      expect(checkout.recorder.success?.currency, 'XAF');
+      checkout.end();
+    });
   });
 
   test('ST-07 survives throwing callbacks', () {
@@ -526,7 +1001,7 @@ void main() {
       controller.result.then((r) => result = r);
       controller.load();
       async.flushMicrotasks();
-      controller.selectMethod(controller.methods.first);
+      controller.selectMethod(controller.methods.firstWhere((m) => m.family == MethodFamily.mobileMoney));
       controller.setPhone('670000000');
       controller.payMobileMoney();
       async.elapse(const Duration(seconds: 10));

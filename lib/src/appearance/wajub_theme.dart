@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 
-/// The sheet's colour tokens. The defaults are the web checkout's own
-/// (`checkout.wajub src/styles/tokens.css`), so the sheet looks like the
-/// hosted checkout.
+/// The sheet's colour tokens, with Wajub's default light and dark
+/// palettes.
 @immutable
 class WajubColors {
   const WajubColors({
@@ -70,7 +69,7 @@ class WajubColors {
   final Color warningBackground;
   final Color disabledBackground;
 
-  /// `DEFAULT_PALETTES.light` of the spec.
+  /// The default light palette.
   static const light = WajubColors(
     primary: Color(0xFF2563EB),
     primaryPressed: Color(0xFF1D4ED8),
@@ -98,7 +97,7 @@ class WajubColors {
     disabledBackground: Color(0xFFF5F5F5),
   );
 
-  /// `DEFAULT_PALETTES.dark` of the spec.
+  /// The default dark palette.
   static const dark = WajubColors(
     primary: Color(0xFF3B82F6),
     primaryPressed: Color(0xFF60A5FA),
@@ -129,7 +128,7 @@ class WajubColors {
   /// The default palette of [brightness].
   static WajubColors of(Brightness brightness) => brightness == Brightness.dark ? dark : light;
 
-  /// Every token under its spec name (`primary`, `onPrimary`, …).
+  /// Every token under its name (`primary`, `onPrimary`, …).
   Map<String, Color> asMap() => {
         'primary': primary,
         'primaryPressed': primaryPressed,
@@ -244,11 +243,11 @@ class WajubThemeData {
   })  : gapRow = gapRow ?? spacingUnit * 4,
         gapColumn = gapColumn ?? spacingUnit * 3;
 
-  /// The web checkout's font, used when the app ships it (Flutter falls back
-  /// to the platform's font otherwise).
+  /// Wajub's default font, used when the app ships it (Flutter falls back to
+  /// the platform's font otherwise).
   static const defaultFontFamily = 'Inter';
 
-  /// Half an input's height (Wajub.js `MAX_RADIUS`).
+  /// Half an input's height.
   static const maxRadius = 22.0;
 
   static const light = WajubThemeData(brightness: Brightness.light, colors: WajubColors.light);

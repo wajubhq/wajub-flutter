@@ -44,6 +44,72 @@ void main() {
     }
   });
 
+  test('MM-10 takes the sandbox test numbers', () {
+    final sandboxNumbers = (vectors()['sandbox_numbers'] as List).cast<Map<String, dynamic>>();
+    expect(sandboxNumbers, isNotEmpty);
+    for (final vector in sandboxNumbers) {
+      final input = vector['input'] as String;
+      final country = vector['country'] as String;
+      final reason = '$input in $country';
+      final test = data.sandboxTestNumber(input, country);
+      expect(test?.operator, vector['operator'], reason: reason);
+      expect(test?.e164, vector['e164'], reason: reason);
+      if (test != null) {
+        // In a sandbox session: valid, the prefix's operator, sent as read.
+        expect(data.isValid(input, country, sandbox: true), isTrue, reason: reason);
+        expect(data.detectOperator(input, country, sandbox: true), vector['operator'], reason: reason);
+        expect(data.e164(input, country, sandbox: true), vector['e164'], reason: reason);
+      } else {
+        expect(data.detectOperator(input, country, sandbox: true), data.detectOperator(input, country), reason: reason);
+        expect(data.e164(input, country, sandbox: true), data.e164(input, country), reason: reason);
+      }
+    }
+    // A + then national digits is another country's number, never a test number.
+    for (final (input, country) in [('+0 000000', 'GA'), ('+680000000', 'CM'), ('+07 00 00 00 00', 'CI')]) {
+      expect(data.sandboxTestNumber(input, country), isNull, reason: '$input in $country');
+      expect(data.isValid(input, country, sandbox: true), isFalse, reason: '$input in $country');
+      expect(data.detectOperator(input, country, sandbox: true), isNull, reason: '$input in $country');
+    }
+    // Outside a sandbox session the prefixes mean nothing.
+    expect(data.isValid('+225070000000', 'CI'), isFalse, reason: 'one digit short of an Ivorian number');
+    expect(data.e164('90 00 00 00', 'BJ'), '+2290190000000');
+    expect(data.detectOperator('680000000', 'CM'), 'mtn', reason: 'Express Union only in sandbox');
+    expect(data.detectOperator('680000000', 'CM', sandbox: true), 'eu');
+    expect(
+      MobileMoneyRules.validate(
+          data: data, phone: '+225070000000', country: 'CI', choiceIds: const ['orange'], selectedId: 'orange'),
+      'invalid_phone',
+    );
+    expect(
+      MobileMoneyRules.validate(
+          data: data,
+          phone: '+225070000000',
+          country: 'CI',
+          choiceIds: const ['orange'],
+          selectedId: 'orange',
+          sandbox: true),
+      isNull,
+    );
+  });
+
+  test('reads Arabic-Indic and Persian digits as the digits they are', () {
+    const arabic = '٦٧٧١٢٣٤٥٦'; // 677123456
+    const persian = '۰۷۰۱۰۲۰۳۰۴'; // 0701020304
+    expect(MobileMoneyData.sanitize(arabic), '677123456');
+    expect(MobileMoneyData.formatAsYouType(arabic), '67 71 23 45 6');
+    expect(data.isValid(arabic, 'CM'), isTrue);
+    expect(data.detectOperator(arabic, 'CM'), 'mtn');
+    expect(data.e164(arabic, 'CM'), '+237677123456');
+    expect(data.e164('+٢٣٧ ٦٩١٢٣٤٥٦٧', 'CM'), '+237691234567');
+    expect(data.isValid(persian, 'CI'), isTrue);
+    expect(data.detectOperator(persian, 'CI'), 'orange');
+    expect(data.e164(persian, 'CI'), '+2250701020304');
+    expect(
+      MobileMoneyRules.validate(data: data, phone: arabic, country: 'CM', choiceIds: const ['mtn'], selectedId: 'mtn'),
+      isNull,
+    );
+  });
+
   test('MM-02 matches the mismatch vectors', () {
     for (final vector in (vectors()['validation_and_mismatch'] as List).cast<Map<String, dynamic>>()) {
       final phone = vector['phone'] as String;
@@ -51,16 +117,18 @@ void main() {
       final choices = (vector['choices'] as List).cast<String>();
       final selected = vector['selected'] as String?;
       final reason = '$phone in $country, $selected selected';
-      expect(data.detectOperator(phone, country), vector['detected'], reason: reason);
+      final sandbox = vector['sandbox'] == true;
+      expect(data.detectOperator(phone, country, sandbox: sandbox), vector['detected'], reason: reason);
       expect(
-        MobileMoneyRules.validate(data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected),
+        MobileMoneyRules.validate(
+            data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected, sandbox: sandbox),
         vector['expected'],
         reason: reason,
       );
       if (vector['expected'] == 'operator_mismatch') {
         expect(
           MobileMoneyRules.mismatch(
-              data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected),
+              data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected, sandbox: sandbox),
           vector['detected'],
           reason: reason,
         );
@@ -81,7 +149,8 @@ void main() {
       expect(
         MobileMoneyRules.preselect(
           choiceIds: choices,
-          currentId: picked ?? choices.first,
+          // Before the number: the first choice that is no wallet taking any number.
+          currentId: picked ?? MobileMoneyRules.initialChoice(data: data, choiceIds: choices),
           pickedByHand: picked != null,
           detectedId: data.detectOperator(phone, country),
         ),
@@ -89,6 +158,13 @@ void main() {
         reason: '$phone in $country, picked ${picked ?? 'nothing'}',
       );
     }
+  });
+
+  test('MM-03 starts on a network operator, never a wallet that takes any number', () {
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const ['eu', 'mtn', 'orange']), 'mtn');
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const ['wave', 'orange']), 'orange');
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const ['wave', 'eu']), 'wave', reason: 'all are');
+    expect(MobileMoneyRules.initialChoice(data: data, choiceIds: const []), isNull);
   });
 
   group('MM-04 lists aggregate operators', () {
@@ -223,25 +299,26 @@ void main() {
     expect(find.bySemanticsLabel('Moov Money'), findsOneWidget);
   });
 
-  test('MM-08 does not block mismatches in sandbox', () {
-    final channels = channelsOf('session-sandbox-cm.json');
-    final ids = operatorChoices(channels, 'CM', data, language: 'en').map((c) => c.id).toList();
-    // A sandbox MTN test number, with Orange picked by hand.
-    const phone = '670000000';
-
-    expect(
-      MobileMoneyRules.mismatch(data: data, phone: phone, country: 'CM', choiceIds: ids, selectedId: 'orange'),
-      'mtn',
-    );
-    expect(
-      MobileMoneyRules.validate(
-          data: data, phone: phone, country: 'CM', choiceIds: ids, selectedId: 'orange', sandbox: true),
-      isNull,
-    );
-    expect(
-      MobileMoneyRules.validate(data: data, phone: phone, country: 'CM', choiceIds: ids, selectedId: 'orange'),
-      'operator_mismatch',
-    );
+  test('MM-08 reads mismatches in sandbox from the test number', () {
+    final sandboxVectors = [
+      for (final vector in (vectors()['validation_and_mismatch'] as List).cast<Map<String, dynamic>>())
+        if (vector['sandbox'] == true) vector,
+    ];
+    expect(sandboxVectors, isNotEmpty);
+    for (final vector in sandboxVectors) {
+      final phone = vector['phone'] as String;
+      final country = vector['country'] as String;
+      final choices = (vector['choices'] as List).cast<String>();
+      final selected = vector['selected'] as String?;
+      final reason = '$phone in $country, $selected selected';
+      expect(data.detectOperator(phone, country, sandbox: true), vector['detected'], reason: reason);
+      expect(
+        MobileMoneyRules.validate(
+            data: data, phone: phone, country: country, choiceIds: choices, selectedId: selected, sandbox: true),
+        vector['expected'],
+        reason: reason,
+      );
+    }
   });
 
   group('MM-09 loads the shared data file', () {
@@ -263,11 +340,21 @@ void main() {
 
     test('rejects an unknown schema_version', () async {
       final file = jsonDecode(File(dataFile).readAsStringSync()) as Map<String, dynamic>;
-      final future = jsonEncode({...file, 'schema_version': 2});
+      final future = jsonEncode({...file, 'schema_version': 3});
+      final past = jsonEncode({...file, 'schema_version': 1});
 
+      expect(file['schema_version'], 2);
       expect(() => MobileMoneyData.parse(future), throwsFormatException);
+      expect(() => MobileMoneyData.parse(past), throwsFormatException);
       await expectLater(MobileMoneyData.load(_StringBundle(future)), throwsFormatException);
       expect(() => MobileMoneyData.parse('[]'), throwsFormatException);
+    });
+
+    test('ships the tables without the spec\'s notes', () {
+      final shipped = jsonDecode(File(dataFile).readAsStringSync()) as Map<String, dynamic>;
+      for (final note in ['source', 'errata', 'algorithms']) {
+        expect(shipped.containsKey(note), isFalse, reason: note);
+      }
     });
 
     test('keeps no copy of the tables in code', () {

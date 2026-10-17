@@ -224,6 +224,8 @@ class _WajubCheckoutViewState extends State<WajubCheckoutView> with WidgetsBindi
         CheckoutScreen.ussd => _Waiting(controller: controller, strings: strings, ussd: true),
         CheckoutScreen.step => StepForm(controller: controller, strings: strings),
         CheckoutScreen.threeDs => ThreeDsForm(controller: controller, strings: strings),
+        CheckoutScreen.payerOtp =>
+          PayerOtpForm(key: ValueKey(controller.payerOtpRound), controller: controller, strings: strings),
         CheckoutScreen.pending => _Pending(controller: controller, strings: strings),
         CheckoutScreen.success => _Success(controller: controller, strings: strings),
         CheckoutScreen.failed => _Failure(controller: controller, strings: strings),
@@ -301,7 +303,7 @@ class _Summary extends StatelessWidget {
                 Text(strings.amountToPay, style: TextStyle(color: colors.textSecondary, fontSize: theme.fontSizeLabel)),
                 SizedBox(height: theme.spacingUnit),
                 Text(
-                  formatAmount(transaction.payableAmount, transaction.currency, controller.language),
+                  formatAmount(controller.amountToPay, transaction.currency, controller.language),
                   key: const ValueKey('wajub-amount'),
                   style: TextStyle(
                     color: colors.text,
@@ -321,7 +323,7 @@ class _Summary extends StatelessWidget {
               ],
             ),
           ),
-          if (transaction.sandbox)
+          if (controller.sandbox)
             Container(
               padding: EdgeInsets.symmetric(horizontal: theme.spacingUnit * 2, vertical: theme.spacingUnit),
               decoration: BoxDecoration(
@@ -550,7 +552,6 @@ class _MethodTile extends StatelessWidget {
     final limitText = limit == null
         ? null
         : (limit.minimum ? strings.minimum : strings.maximum)(formatAmount(limit.amount, limit.currency, language));
-    final logo = method.channels.isEmpty ? null : method.channel.logo;
     final icon = Icon(
       switch (method.family) {
         MethodFamily.mobileMoney => Icons.phone_iphone,
@@ -581,7 +582,16 @@ class _MethodTile extends StatelessWidget {
               children: [
                 SizedBox.square(
                   dimension: 32,
-                  child: logo == null ? icon : NetworkLogo(url: logo, width: 32, height: 32, fallback: icon),
+                  child: (method.channels.isEmpty
+                          ? null
+                          : NetworkLogo.of(
+                              logo: method.channel.logo,
+                              logoPng: method.channel.logoPng,
+                              width: 32,
+                              height: 32,
+                              fallback: icon,
+                            )) ??
+                      icon,
                 ),
                 SizedBox(width: theme.spacingUnit * 3),
                 Expanded(
@@ -633,8 +643,14 @@ class _Waiting extends StatelessWidget {
       icon: ussd ? Icons.dialpad : Icons.phone_iphone,
       color: colors.primary,
       background: colors.selectedBackground,
-      title: ussd ? strings.ussdTitle : strings.approvalTitle,
-      message: ussd ? null : (phone != null ? strings.approvalSentTo(phone) : null),
+      // After the payer's own code, the operator approves: nothing to do on
+      // the phone.
+      title: ussd
+          ? strings.ussdTitle
+          : controller.payerOtpSent
+              ? strings.payerOtp('approval')
+              : strings.approvalTitle,
+      message: ussd || controller.payerOtpSent ? null : (phone != null ? strings.approvalSentTo(phone) : null),
       children: [
         if (instruction != null) ...[
           Container(

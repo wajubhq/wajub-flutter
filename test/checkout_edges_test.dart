@@ -15,6 +15,7 @@ import 'package:wajub_mobile/src/checkout/altcha.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
 import 'package:wajub_mobile/src/checkout/checkout_methods.dart';
 import 'package:wajub_mobile/src/checkout/checkout_types.dart';
+import 'package:wajub_mobile/src/checkout/digits.dart';
 import 'package:wajub_mobile/src/checkout/present_options.dart';
 import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/models/payment_result.dart';
@@ -141,7 +142,7 @@ void main() {
     test('a realtime frame without a status decides nothing', () {
       virtual((async) {
         final session = SessionData.fromJson(fixtureBody('session-cm-aggregate.json'));
-        final endpoint = RealtimeEndpoint.resolve(session, const RealtimeOptions())!;
+        final endpoint = RealtimeEndpoint.resolve(session)!;
         final sockets = FakeRealtime();
         final decisions = <WatchDecision>[];
         final watcher = PaymentWatcher(
@@ -808,6 +809,126 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
       expect(cancelled, 1, reason: 'reported through its callbacks');
+    });
+  });
+
+  test('the sandbox flag comes from the session load; a later answer without it never lowers it', () {
+    virtual((async) {
+      Map<String, dynamic> withoutSandbox(String name) {
+        final body = fixtureBody(name);
+        (body['transaction'] as Map).remove('sandbox');
+        return body;
+      }
+
+      final api = FakeApi(routes: {
+        'GET /pay/session': 'session-sandbox-cm.json',
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': [
+          FakeAnswer(402, withoutSandbox('process-402-insufficient-funds-sandbox.json')),
+          FakeAnswer(202, withoutSandbox('process-processing-mobile-money-sandbox.json')),
+        ],
+        'GET /pay/status': const FakeAnswer(200, {
+          'transaction': {'reference': 'trx_PVrU8x2kQ1mNa7Lb3cDe', 'status': 'succeeded'},
+        }),
+      });
+      final checkout = Checkout(async, api, autoCloseSuccess: Duration.zero);
+      expect(checkout.controller.sandbox, isTrue);
+      checkout.mobileMoney('677123456', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.failed);
+      expect(checkout.controller.sandbox, isTrue, reason: 'a refusal without the flag');
+      checkout.controller.tryAgain();
+      // A sandbox test number the numbering plan refuses: still a sandbox session.
+      checkout.mobileMoney('+2376700000000', pick: 'mtn');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(((api.bodies('/pay/process').last['data'] as Map)['phone']), '+2376700000000');
+      expect(checkout.controller.sandbox, isTrue, reason: 'an answer without the flag');
+      checkout.elapse(const Duration(seconds: 6));
+      expect(checkout.controller.state, CheckoutState.success);
+      checkout.controller.close();
+      expect((checkout.result as CheckoutComplete).transaction?.sandbox, isTrue);
+    });
+  });
+
+  group('digits of any script', () {
+    test('are written 0-9; other numeric signs are not digits', () {
+      expect(asciiDigits('٠١٢٣٤٥٦٧٨٩'), '0123456789', reason: 'Arabic-Indic');
+      expect(asciiDigits('۰۱۲۳۴۵۶۷۸۹'), '0123456789', reason: 'Persian');
+      expect(asciiDigits('०१२ ০১২ ０１２'), '012 012 012', reason: 'Devanagari, Bengali, full width');
+      expect(asciiDigits('½Ⅳ²'), '½Ⅳ²', reason: 'not decimal digits');
+      expect(isAsciiDigits('1234', min: 4, max: 6), isTrue);
+      expect(isAsciiDigits('12½4', min: 4, max: 6), isFalse);
+      expect(isAsciiDigits('١٢٣٤', min: 4, max: 6), isFalse, reason: 'converted first, never accepted as they are');
+    });
+
+    test('a confirmation step sends 0-9 and refuses a code that is not digits', () {
+      for (final (kind, field, typed, sent) in [
+        ('otp', 'code', '١٢٣٤٥٦', '123456'),
+        ('pin', 'pin', '۱۲۳۴', '1234'),
+        ('birthday', 'birthday', '١٩٩٠-٠١-٣١', '1990-01-31'),
+      ]) {
+        virtual((async) {
+          final api = FakeApi(routes: {
+            'GET /pay/session': 'session-cm-aggregate.json',
+            'GET /pay/sdk-config': 'sdk-config-card-mollie.json',
+            'POST /pay/process': 'process-requires-$kind.json',
+            'POST /pay/$kind/verify': '$kind-verify-success.json',
+            'GET /pay/status': 'status-processing.json',
+          });
+          final checkout = Checkout(async, api, locale: 'en');
+          checkout.controller.selectMethod(checkout.method(MethodFamily.card));
+          checkout.run(checkout.controller.payCard);
+          for (final bad in ['½Ⅳ٣٤', 'Ⅻ-Ⅰ-Ⅴ']) {
+            checkout.run(() => checkout.controller.submitStep({field: bad}));
+            expect(checkout.controller.fieldErrors[field], isNotNull, reason: '$kind: $bad');
+          }
+          expect(api.calls('/pay/$kind/verify'), isEmpty, reason: 'nothing sent');
+          checkout.run(() => checkout.controller.submitStep({field: typed}));
+          expect(api.bodies('/pay/$kind/verify').single[field], sent, reason: kind);
+          checkout.end();
+        });
+      }
+    });
+
+    test('the sandbox 3-D Secure code and the test card send 0-9', () {
+      virtual((async) {
+        final api = FakeApi(routes: {
+          'GET /pay/session': 'session-sandbox-cm.json',
+          'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+          'POST /pay/process': 'process-requires-3ds-sandbox.json',
+          'POST /pay/3ds/verify': '3ds-verify-202.json',
+          'GET /pay/status': 'status-processing.json',
+        });
+        final checkout = Checkout(async, api, locale: 'en');
+        checkout.controller.selectMethod(checkout.method(MethodFamily.card));
+        final card = {
+          'card.number': '٤٠٠٠ ٠٥٦٦ ٥٥٦٦ ٥٥٥٦',
+          'card_holder': 'Awa Ngono',
+          'expiry_month': '١٢',
+          'expiry_year': '۳۰',
+          'cvv': '½٢٣',
+        };
+        for (final entry in card.entries) {
+          checkout.controller.setCardField(entry.key, entry.value);
+        }
+        checkout.run(checkout.controller.payCard);
+        expect(checkout.controller.fieldErrors['cvv'], isNotNull, reason: '½ is no digit');
+        expect(api.calls('/pay/process'), isEmpty);
+        checkout.controller.setCardField('cvv', '١٢٣');
+        checkout.run(checkout.controller.payCard);
+        final data = api.bodies('/pay/process').single['data'] as Map;
+        expect(
+          (data['card.number'], data['expiry_month'], data['expiry_year'], data['cvv']),
+          ('4000 0566 5566 5556', '12', '30', '123'),
+        );
+        expect(checkout.controller.screen, CheckoutScreen.threeDs);
+        checkout.run(() => checkout.controller.submitThreeDsCode('Ⅳ½٣٤٥٦'));
+        expect(checkout.controller.fieldErrors['code'], isNotNull);
+        expect(api.calls('/pay/3ds/verify'), isEmpty);
+        checkout.run(() => checkout.controller.submitThreeDsCode('١٢٣٤٥٦'));
+        expect(api.bodies('/pay/3ds/verify').single['code'], '123456');
+        checkout.end();
+      });
     });
   });
 

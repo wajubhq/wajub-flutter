@@ -10,8 +10,8 @@ import '../wajub_session.dart';
 import 'checkout_view.dart';
 
 /// Presents the Wajub payment sheet for [PresentOptions.sessionToken] (the
-/// `authorization_token` your server got from `POST /payments`) and resolves
-/// once it closes, exactly once, with a [CheckoutResult]:
+/// `authorization_token` your server got when it created the payment) and
+/// resolves once it closes, exactly once, with a [CheckoutResult]:
 ///
 /// - [CheckoutComplete]: paid. Confirm it server-side before delivering.
 /// - [CheckoutProcessing]: closed while a payment was running; money may
@@ -48,7 +48,7 @@ Future<CheckoutResult> presentCheckout(BuildContext context, CheckoutController 
   // the barrier (held by the PopScope, then popped here), and a swipe down
   // (the sheet pops itself as the finger lifts). Any other removal — the
   // host popping or replacing its stack — is the host going away, which
-  // never cancels the payment (states.md §5).
+  // never cancels the payment.
   var payerLeft = false;
   var fingerLifted = false;
   final Future<void> sheet;

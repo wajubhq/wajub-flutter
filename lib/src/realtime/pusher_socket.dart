@@ -3,12 +3,11 @@ import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../checkout/present_options.dart';
 import '../models/json_read.dart';
 import '../models/models.dart';
 import '../version.dart';
 
-/// One message pipe to a Pusher-protocol server (Pusher, Reverb, Soketi).
+/// One message pipe to the realtime server the session names.
 abstract interface class RealtimeTransport {
   Stream<String> get messages;
   void send(String message);
@@ -18,8 +17,7 @@ abstract interface class RealtimeTransport {
 /// Opens a [RealtimeTransport] to [uri]; throws when it cannot.
 typedef RealtimeConnector = Future<RealtimeTransport> Function(Uri uri);
 
-/// Where the payment's realtime updates are published: the session's `echo`,
-/// overridden by [RealtimeOptions].
+/// Where the payment's realtime updates are published: the session's `echo`.
 class RealtimeEndpoint {
   const RealtimeEndpoint({
     required this.key,
@@ -46,21 +44,18 @@ class RealtimeEndpoint {
         queryParameters: {'protocol': '7', 'client': 'wajub-flutter', 'version': wajubSdkVersion, 'flash': 'false'},
       );
 
-  /// Null when the session names no usable socket (no `echo`, no key) or the
-  /// app turned realtime off: the payment is then followed by polling only.
-  static RealtimeEndpoint? resolve(SessionData session, RealtimeOptions options) {
+  /// Null when the session names no usable socket (no `echo`, no key): the
+  /// payment is then followed by polling only.
+  static RealtimeEndpoint? resolve(SessionData session) {
     final echo = session.echoSettings ?? session.echo;
-    if (!options.enabled || echo == null || echo.key.trim().isEmpty) return null;
+    if (echo == null || echo.key.trim().isEmpty) return null;
     // `ws_host` carries the scheme: `wss://` is TLS, `ws://` plain.
-    final configured = Uri.tryParse(echo.wsHost.contains('://') ? echo.wsHost : '//${echo.wsHost}');
-    final override =
-        options.host == null ? null : Uri.tryParse(options.host!.contains('://') ? options.host! : '//${options.host}');
-    final source = override ?? configured;
+    final source = Uri.tryParse(echo.wsHost.contains('://') ? echo.wsHost : '//${echo.wsHost}');
     final host = source?.host ?? '';
     if (host.isEmpty) return null;
-    final port = options.port ?? (override != null && override.hasPort ? override.port : echo.wsPort);
+    final port = echo.wsPort;
     final scheme = source!.scheme;
-    final tls = options.tls ?? (scheme.isEmpty ? port == 443 : scheme == 'wss' || scheme == 'https');
+    final tls = scheme.isEmpty ? port == 443 : scheme == 'wss' || scheme == 'https';
     return RealtimeEndpoint(
       key: echo.key,
       host: host,
@@ -72,8 +67,8 @@ class RealtimeEndpoint {
 }
 
 /// A Pusher-protocol client for one private channel, over a plain WebSocket:
-/// it reaches the host and port the session names (a self-hosted Reverb as
-/// well as Pusher's cloud), authorizes the channel with the session's token,
+/// it reaches the host and port the session names, authorizes the channel
+/// with the session's token,
 /// answers pings, and reconnects with a growing delay until [stop].
 class PusherSocket {
   PusherSocket({
@@ -159,7 +154,7 @@ class PusherSocket {
         if (code != null && code >= 4000 && code < 4100) unawaited(stop());
       default:
         if (readString(frame['channel']) == endpoint.channel && !event.startsWith('pusher')) {
-          // Laravel's broadcastAs name; Echo clients prefix it with a dot.
+          // The event's name, without the leading dot some servers add.
           onEvent(event.startsWith('.') ? event.substring(1) : event, data);
         }
     }

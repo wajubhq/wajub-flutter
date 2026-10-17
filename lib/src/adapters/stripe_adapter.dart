@@ -2,7 +2,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../models/wajub_error.dart';
 
-/// Stripe `stripe_elements` adapter — tokenizes card data natively (no WebView).
+/// Stripe's card form, for apps that draw their own card screen.
 class StripeAdapter {
   StripeAdapter._();
 
@@ -23,7 +23,8 @@ class StripeAdapter {
     await Stripe.instance.applySettings();
   }
 
-  /// Creates a Stripe PaymentMethod and returns `pm_*` for `POST /pay/process`.
+  /// Creates a Stripe PaymentMethod from Stripe's card field and returns its
+  /// id (`pm_…`) for `WajubSession.payCard`.
   static Future<String> createPaymentMethod({String? cardholderName}) async {
     try {
       final result = await Stripe.instance.createPaymentMethod(
@@ -45,7 +46,8 @@ class StripeAdapter {
   }
 }
 
-/// Builds the `/pay/process` body for a tokenized card payment.
+/// The payment data of a card Stripe tokenized, for
+/// `WajubSession.processPayment`.
 Map<String, dynamic> buildStripeCardRequest({
   required String paymentMethodId,
   String? cardholderName,

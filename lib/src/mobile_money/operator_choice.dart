@@ -1,4 +1,5 @@
 import '../models/models.dart';
+import '../models/payer_otp.dart';
 import 'mobile_money_data.dart';
 
 /// One operator the payer can pick in the Mobile Money form: a member of an
@@ -10,11 +11,14 @@ class OperatorChoice {
     required this.label,
     required this.name,
     this.logo,
+    this.logoPng,
     required this.channelSlug,
     required this.configSlug,
     this.viaAggregate = false,
     required this.badge,
     this.operatorIndependent = false,
+    this.amountTotal,
+    this.payerOtp,
   });
 
   /// `mtn`, `wave`, `eu`: the aggregate member's `operator`, or the
@@ -32,6 +36,9 @@ class OperatorChoice {
   /// An `https` URL, else null (the [badge] stands in).
   final String? logo;
 
+  /// The PNG of the same logo, drawn when [logo] does not load.
+  final String? logoPng;
+
   /// The `channel` of `POST /pay/process`: the aggregate's slug for one of
   /// its members, the channel's own slug otherwise.
   final String channelSlug;
@@ -48,6 +55,14 @@ class OperatorChoice {
 
   /// Takes any number: never an `operator_mismatch`.
   final bool operatorIndependent;
+
+  /// What the payer pays with it: the member's own total, else its
+  /// channel's; null when the payment's total applies.
+  final double? amountTotal;
+
+  /// The code its channel asks the payer to generate before the charge
+  /// (never an aggregate's member).
+  final PayerOtpInstructions? payerOtp;
 }
 
 /// A channel the Mobile Money form pays through (`mobile_money`, `mobile`).
@@ -66,7 +81,7 @@ List<String> mobileMoneyCountries(Iterable<SessionChannel> channels) {
   return countries;
 }
 
-/// The country the form opens on (README §6.1): [requested] when a Mobile
+/// The country the form opens on: [requested] when a Mobile
 /// Money channel covers it, else [geoCountry] when one covers it, else the
 /// first country of the first Mobile Money channel. Null without one.
 String? defaultMobileMoneyCountry(Iterable<SessionChannel> channels, {String? requested, String? geoCountry}) {
@@ -82,7 +97,7 @@ String? defaultMobileMoneyCountry(Iterable<SessionChannel> channels, {String? re
   return countries.isEmpty ? null : countries.first;
 }
 
-/// The operators the payer can pick for [country] (README §6.1), from each
+/// The operators the payer can pick for [country], from each
 /// Mobile Money channel that covers it, in API order: one per member of an
 /// aggregate, one for any other channel. A repeated id keeps the first.
 /// [language] (`fr` or `en`) names a channel by `name.fr` or `name`.
@@ -99,9 +114,12 @@ List<OperatorChoice> operatorChoices(
     required String id,
     required String name,
     required String? logo,
+    required String? logoPng,
     required String channelSlug,
     required String configSlug,
     required bool viaAggregate,
+    double? amountTotal,
+    PayerOtpInstructions? payerOtp,
   }) {
     if (id.isEmpty || choices.any((c) => c.id == id)) return;
     final brand = data.operators[id]?.brand;
@@ -110,11 +128,14 @@ List<OperatorChoice> operatorChoices(
       label: brand?.label ?? name,
       name: name,
       logo: _httpsUrl(logo),
+      logoPng: _httpsUrl(logoPng),
       channelSlug: channelSlug,
       configSlug: configSlug,
       viaAggregate: viaAggregate,
       badge: brand ?? data.fallbackBrand,
       operatorIndependent: data.isOperatorIndependent(id),
+      amountTotal: amountTotal,
+      payerOtp: payerOtp,
     ));
   }
 
@@ -126,9 +147,11 @@ List<OperatorChoice> operatorChoices(
           id: member.operator.toLowerCase(),
           name: member.name,
           logo: member.logo,
+          logoPng: member.logoPng,
           channelSlug: channel.slug,
           configSlug: member.slug,
           viaAggregate: true,
+          amountTotal: member.amountTotal ?? channel.amountTotal,
         );
       }
     } else {
@@ -136,9 +159,12 @@ List<OperatorChoice> operatorChoices(
         id: _afterDot(channel.slug).toLowerCase(),
         name: channel.localizedName(language),
         logo: channel.logo,
+        logoPng: channel.logoPng,
         channelSlug: channel.slug,
         configSlug: channel.slug,
         viaAggregate: false,
+        amountTotal: channel.amountTotal,
+        payerOtp: channel.payerOtp,
       );
     }
   }

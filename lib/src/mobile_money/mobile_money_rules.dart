@@ -1,14 +1,13 @@
 import 'mobile_money_data.dart';
 import 'operator_choice.dart';
 
-/// The Mobile Money form's rules (README §6.2–6.4, checkout.wajub's
-/// `MobileMoneyForm.tsx`): validation, mismatch, preselection by detection
-/// and the `operator` hint. Codes are errors.md §3.3's.
+/// The Mobile Money form's rules: validation, mismatch, preselection by
+/// detection and the `operator` hint, with the error catalogue's form codes.
 abstract final class MobileMoneyRules {
   /// What stops a submission, checked in this order: `phone_required`,
   /// `invalid_phone`, `operator_mismatch`, `operator_required`; null when
-  /// nothing does. In [sandbox] a mismatch does not block: sandbox prefixes
-  /// do not follow real numbering plans (README §6.6).
+  /// nothing does. In a [sandbox] session a test number's operator is its
+  /// prefix's, and a mismatch blocks as in live.
   static String? validate({
     required MobileMoneyData data,
     required String phone,
@@ -18,15 +17,16 @@ abstract final class MobileMoneyRules {
     bool sandbox = false,
   }) {
     if (MobileMoneyData.sanitize(phone).isEmpty) return 'phone_required';
-    if (!data.isValid(phone, country)) return 'invalid_phone';
+    if (!data.isValid(phone, country, sandbox: sandbox)) return 'invalid_phone';
     final mismatched = mismatch(
       data: data,
       phone: phone,
       country: country,
       choiceIds: choiceIds,
       selectedId: selectedId,
+      sandbox: sandbox,
     );
-    if (mismatched != null && !sandbox) return 'operator_mismatch';
+    if (mismatched != null) return 'operator_mismatch';
     if (selectedId == null || !choiceIds.contains(selectedId)) return 'operator_required';
     return null;
   }
@@ -41,11 +41,20 @@ abstract final class MobileMoneyRules {
     required String country,
     required List<String> choiceIds,
     required String? selectedId,
+    bool sandbox = false,
   }) {
     if (selectedId == null || data.isOperatorIndependent(selectedId)) return null;
-    final detected = data.detectOperator(phone, country);
+    final detected = data.detectOperator(phone, country, sandbox: sandbox);
     if (detected == null || detected == selectedId || !choiceIds.contains(detected)) return null;
     return detected;
+  }
+
+  /// The choice before any number is typed: the first offered operator that
+  /// is not a wallet taking any number (Express Union, Wave…), else the
+  /// first.
+  static String? initialChoice({required MobileMoneyData data, required List<String> choiceIds}) {
+    if (choiceIds.isEmpty) return null;
+    return choiceIds.where((id) => !data.isOperatorIndependent(id)).firstOrNull ?? choiceIds.first;
   }
 
   /// The selection once the number changed: an operator the payer picked by
@@ -86,21 +95,22 @@ abstract final class MobileMoneyRules {
     required String country,
     required OperatorChoice choice,
     required bool pickedByHand,
+    bool sandbox = false,
   }) {
     final hint = operatorHint(
       viaAggregate: choice.viaAggregate,
       selectedId: choice.id,
       pickedByHand: pickedByHand,
-      detectedId: data.detectOperator(phone, country),
+      detectedId: data.detectOperator(phone, country, sandbox: sandbox),
     );
     return {
-      'phone': data.e164(phone, country),
+      'phone': data.e164(phone, country, sandbox: sandbox),
       'country': country.toUpperCase(),
       if (hint != null) 'operator': hint,
     };
   }
 
-  /// Whether the operator list shows (README §6.2). With `operatorMode:
+  /// Whether the operator list shows. With `operatorMode:
   /// "detect"` it stays hidden until the number (6 digits or more) names no
   /// offered operator, or a wallet that takes any number is offered while the
   /// number names an operator, or the payer opens it; meanwhile
@@ -112,10 +122,11 @@ abstract final class MobileMoneyRules {
     required String country,
     required List<String> choiceIds,
     bool openedByPayer = false,
+    bool sandbox = false,
   }) {
     if (operatorMode != 'detect' || openedByPayer) return true;
     if (data.nationalDigits(phone, country).length < 6) return false;
-    final detected = data.detectOperator(phone, country);
+    final detected = data.detectOperator(phone, country, sandbox: sandbox);
     if (detected == null || !choiceIds.contains(detected)) return true;
     return choiceIds.any(data.isOperatorIndependent);
   }
@@ -127,8 +138,9 @@ abstract final class MobileMoneyRules {
     required String phone,
     required String country,
     required List<String> choiceIds,
+    bool sandbox = false,
   }) {
-    final detected = data.detectOperator(phone, country);
+    final detected = data.detectOperator(phone, country, sandbox: sandbox);
     if (detected != null && choiceIds.contains(detected)) return detected;
     return choiceIds.length == 1 ? choiceIds.single : null;
   }

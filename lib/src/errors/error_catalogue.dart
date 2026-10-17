@@ -1,6 +1,6 @@
 import '../models/wajub_error.dart';
 
-/// One code of the error catalogue (spec errors.md §3): its type, whether the
+/// One code of the error catalogue: its type, whether the
 /// payer can try again, and its payer-facing text in both languages. `{…}`
 /// are placeholders.
 class ErrorEntry {
@@ -12,8 +12,8 @@ class ErrorEntry {
   final String fr;
 }
 
-/// The codes the SDK knows, with the web checkout's texts where it has one.
-/// An API code missing here is passed through as it is (errors.md §2).
+/// The codes the SDK knows, with their texts for the payer.
+/// An API code missing here is passed through as it is.
 abstract final class ErrorCatalogue {
   static const _api = WajubErrorType.apiError;
   static const _auth = WajubErrorType.authenticationError;
@@ -34,8 +34,30 @@ abstract final class ErrorCatalogue {
     "Ce paiement n'a pas abouti. Réessayez ou utilisez un autre moyen de paiement.",
   );
 
+  /// `payment_in_progress` when a cancel is refused: the payment is being
+  /// paid. (On a payment, the same code is not an error: the sheet waits.)
+  static const cancelInProgress = ErrorEntry(
+    _invalid,
+    false,
+    "This payment is being paid and can't be cancelled now.",
+    'Ce paiement est en cours de règlement et ne peut pas être annulé maintenant.',
+  );
+
+  /// `invalid_otp` on a payment (a refusal the status reports, or a charge's
+  /// answer): the operator did not accept the code the payer generated.
+  static const payerOtpRefused = ErrorEntry(
+    _payment,
+    true,
+    'Your operator did not accept this code. Generate a new one and try again.',
+    "Votre opérateur n'a pas accepté ce code. Générez-en un nouveau et réessayez.",
+  );
+
+  /// The entry of [code], [cancelling] when the error answers a cancel.
+  static ErrorEntry? entryFor(String code, {bool cancelling = false}) =>
+      cancelling && code == 'payment_in_progress' ? cancelInProgress : lookup(code);
+
   static const entries = <String, ErrorEntry>{
-    // Load (§3.1).
+    // Load.
     'session_not_found': ErrorEntry(
       _auth,
       false,
@@ -69,7 +91,7 @@ abstract final class ErrorCatalogue {
       'No payment method is available for this payment.',
       "Aucun moyen de paiement n'est disponible pour ce paiement.",
     ),
-    // Transport (§3.2).
+    // Transport.
     'network_error': ErrorEntry(
       _api,
       true,
@@ -95,7 +117,7 @@ abstract final class ErrorCatalogue {
       'An error occurred. Please try again.',
       'Une erreur est survenue. Veuillez réessayer.',
     ),
-    // Form (§3.3): shown on the field, never sent to onError.
+    // Form: shown on the field, never sent to onError.
     'phone_required': ErrorEntry(
       _invalid,
       true,
@@ -134,7 +156,7 @@ abstract final class ErrorCatalogue {
       'Check the information entered.',
       'Vérifiez les informations saisies.',
     ),
-    // Payment (§3.4).
+    // Payment.
     'payment_declined': ErrorEntry(
       _payment,
       true,
@@ -172,6 +194,12 @@ abstract final class ErrorCatalogue {
       true,
       'This payment method is not available for this merchant.',
       "Ce moyen de paiement n'est pas disponible pour ce marchand.",
+    ),
+    'otp_attempts_exceeded': ErrorEntry(
+      _payment,
+      true,
+      'Your operator refused too many codes for this payment. Choose another payment method.',
+      'Votre opérateur a refusé trop de codes pour ce paiement. Choisissez un autre moyen de paiement.',
     ),
     'country_restricted': ErrorEntry(
       _payment,
@@ -211,6 +239,12 @@ abstract final class ErrorCatalogue {
       'This payment can no longer be processed.',
       'Ce paiement ne peut plus être traité.',
     ),
+    'payment_partly_paid': ErrorEntry(
+      _invalid,
+      false,
+      "Part of this payment has already been paid, so it can't be cancelled.",
+      'Une partie de ce paiement a déjà été réglée : il ne peut plus être annulé.',
+    ),
     'order_not_validated': ErrorEntry(
       _invalid,
       false,
@@ -241,7 +275,7 @@ abstract final class ErrorCatalogue {
       "We couldn't open the payment page. Check that a web browser is enabled, then try again.",
       "Impossible d'ouvrir la page de paiement. Vérifiez qu'un navigateur est activé, puis réessayez.",
     ),
-    // Confirmation steps (§3.5).
+    // Confirmation steps.
     'invalid_otp':
         ErrorEntry(_invalid, true, 'Incorrect code. {n} attempts left.', 'Code incorrect. Encore {n} essais.'),
     'otp_expired': ErrorEntry(_invalid, true, 'The code has expired.', 'Le code a expiré.'),
@@ -298,7 +332,7 @@ abstract final class ErrorCatalogue {
       '3D Secure verification has expired.',
       'La vérification 3D Secure a expiré.',
     ),
-    // Client sessions (§3.6).
+    // Client sessions.
     'client_session_unavailable': ErrorEntry(
       _invalid,
       false,
@@ -311,7 +345,7 @@ abstract final class ErrorCatalogue {
       'This card payment session has expired. Start again.',
       'Cette session de paiement par carte a expiré. Recommencez.',
     ),
-    // SDK use (§3.7): developer-facing, English only.
+    // SDK use: developer-facing, English only.
     'sheet_already_presented': ErrorEntry(
       _invalid,
       false,

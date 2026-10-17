@@ -7,11 +7,11 @@ import 'wajub_theme.dart';
 /// Turns the host's [Appearance], the merchant's [Branding] and, with
 /// `inherit`, the host app's [ThemeData] into the tokens the sheet draws with.
 ///
-/// For each token the first value found wins (Wajub.js's order): the
+/// For each token the first value found wins, in this order: the
 /// appearance's `variables`, its top-level keys, its preset, the host app's
 /// theme, the merchant's branding, the default palette of the colour scheme.
 abstract final class AppearanceResolver {
-  /// Wajub.js's presets (`appearance.js:26-47`), value for value.
+  /// The presets, value for value.
   static const presets = <String, Appearance>{
     'stripe': Appearance(
       primaryColor: '#0570de',
@@ -85,8 +85,8 @@ abstract final class AppearanceResolver {
     final background = first((l) => l.background) ?? palette.background;
 
     // The host app's colours and the merchant's primary are kept only when
-    // they stay legible on the background (Wajub.js `appearance-inherit.js`,
-    // `ensureAccessibleColors`); anything else falls through to the next layer.
+    // they stay legible on the background; anything else falls through to
+    // the next layer.
     bool legible(Color? color, double ratio) => color != null && contrastRatio(color, background) >= ratio;
     final primary = variables.primary ??
         legacy.primary ??
@@ -388,7 +388,7 @@ abstract final class AppearanceResolver {
   static final _hexColor = RegExp(r'^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$');
   static final _rgbColor = RegExp(r'^rgba?\(([^)]*)\)$');
 
-  /// The tokens Wajub.js derives from the ones a host or merchant sets, so a
+  /// The tokens derived from the ones a host or merchant sets, so a
   /// custom primary also tints the focus ring, links and the selected row,
   /// and a custom background carries its own raised and muted surfaces.
   static WajubColors _derive({
@@ -551,7 +551,7 @@ class _Layer {
     );
   }
 
-  /// Wajub.js's top-level keys, of the appearance or of a preset.
+  /// The top-level keys, of the appearance or of a preset.
   factory _Layer.legacy(Appearance? a) {
     if (a == null) return const _Layer();
     final parse = AppearanceResolver.parseColor;
@@ -571,8 +571,9 @@ class _Layer {
     );
   }
 
-  /// appearance.md §3, Flutter column. The contrast thresholds are applied
-  /// by the resolver, against the resolved background.
+  /// The host app's theme: its colours, font and input radius. The contrast
+  /// thresholds are applied by the resolver, against the resolved
+  /// background.
   factory _Layer.inherited(ThemeData theme) {
     final border = theme.inputDecorationTheme.border;
     return _Layer(
@@ -586,7 +587,7 @@ class _Layer {
     );
   }
 
-  /// appearance.md §4. The background, the summary panel, the muted text,
+  /// The merchant's branding. The background, the summary panel, the muted text,
   /// the inputs and the separator were designed for one scheme (dark when
   /// `appearance_mode` is `dark`, light otherwise) and apply only there.
   factory _Layer.branding(Branding b, Brightness brightness) {
@@ -650,7 +651,7 @@ double? _elevation(String? shadow) => switch (shadow?.trim().toLowerCase()) {
       _ => null,
     };
 
-/// `"12px"`, `"12"`, or the dashboard's tokens (`engine.ts:72-90`).
+/// `"12px"`, `"12"`, or the dashboard's named sizes.
 double? _brandingRadius(String? value) => switch (value?.trim().toLowerCase()) {
       'none' => 0,
       'sm' => 4,

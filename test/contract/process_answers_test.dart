@@ -284,5 +284,28 @@ void main() {
       expect(checkout.recorder.events.where((e) => e.startsWith('started')), hasLength(1));
       checkout.end();
     });
+
+    // Asked for the payer's code: nothing charged yet; the 2xx that answers
+    // the code starts the payment.
+    virtual((async) {
+      final session = fixtureBody('session-payer-otp-announced.json');
+      (((session['channels'] as List).first) as Map).remove('payer_otp');
+      final api = FakeApi(routes: {
+        'GET /pay/session': FakeAnswer(200, session),
+        'GET /pay/sdk-config': 'sdk-config-sandbox.json',
+        'POST /pay/process': ['process-payer-otp-required.json', 'process-payer-otp-accepted-sandbox.json'],
+        'GET /pay/status': 'status-processing.json',
+      });
+      final checkout = Checkout(async, api);
+      checkout.mobileMoney('70000000');
+      checkout.run(checkout.controller.payMobileMoney);
+      expect(checkout.controller.state, CheckoutState.payerOtpRequired);
+      expect(checkout.recorder.started, isNull, reason: 'a payer_otp answer charged nothing');
+      checkout.run(() => checkout.controller.submitPayerOtp('123456'));
+      expect(checkout.recorder.events.where((e) => e.startsWith('started')), ['started:mobile_money:bf.orange']);
+      checkout.elapse(const Duration(seconds: 12));
+      expect(checkout.recorder.events.where((e) => e.startsWith('started')), hasLength(1));
+      checkout.end();
+    });
   });
 }

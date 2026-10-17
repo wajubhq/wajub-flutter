@@ -10,14 +10,11 @@ import '../wajub_session.dart';
 import 'checkout_view.dart';
 import 'present.dart';
 
-/// The 1.x payment sheet, kept for apps that embed it themselves. It now
-/// draws the full checkout of [presentWajubCheckout] — methods, Mobile Money
-/// operators, confirmation steps, outcomes — and reports through its 1.x
-/// callbacks: [onResult] with the outcome (complete, failed, or processing
-/// when the payment is still running), [onDismiss] when the payer closes it
-/// or cancels, or when the payment could not load (1.x showed the load error
-/// in the sheet and reported nothing else). It never cancels the payment on
-/// Wajub by itself.
+/// The payment sheet as a widget you embed yourself. It reports through
+/// [onResult] with the outcome (complete, failed, or processing when the
+/// payment is still running), and [onDismiss] when the payer closes it or
+/// cancels, or when the payment could not load. It never cancels the
+/// payment by itself.
 @Deprecated('Use presentWajubCheckout, which resolves with a CheckoutResult and reports every state.')
 class PaymentSheet extends StatefulWidget {
   const PaymentSheet({
@@ -76,16 +73,14 @@ class _PaymentSheetState extends State<PaymentSheet> {
       WajubCheckoutView(controller: _controller, onDismissRequested: () => unawaited(_controller.dismiss()));
 }
 
-/// Shows the payment sheet as a modal bottom sheet, as 1.x did.
+/// Shows the payment sheet as a modal bottom sheet.
 ///
 /// [onResult] receives the outcome of a payment the payer submitted:
 /// [PaymentComplete], [PaymentFailed], or [PaymentProcessing] when the sheet
 /// closed while it was still running. [onCancel] is called when the payer
 /// closed the sheet (the close button, a swipe down, the back button) or
-/// cancelled before any payment — the payment is then also cancelled on
-/// Wajub (`/pay/cancel`), as the hosted checkout does, but never once the
-/// payer submitted one, as in 1.x — and, as in 1.x, when the payment could
-/// not load.
+/// cancelled before submitting a payment — the payment is then also
+/// cancelled — and when the payment could not load.
 ///
 /// [locale] (`fr` or `en`) picks the sheet's language; without it the sheet
 /// follows the payment's own.

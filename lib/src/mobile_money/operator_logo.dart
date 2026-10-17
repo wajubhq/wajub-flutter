@@ -16,23 +16,19 @@ class OperatorLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final logo = choice.logo;
+    final logo = NetworkLogo.of(
+      key: ValueKey('wajub-operator-logo-${choice.id}'),
+      logo: choice.logo,
+      logoPng: choice.logoPng,
+      width: size,
+      height: size,
+      fallback: _badge(),
+    );
     return Semantics(
       label: choice.label,
       image: true,
       excludeSemantics: true,
-      child: SizedBox.square(
-        dimension: size,
-        child: logo == null
-            ? _badge()
-            : NetworkLogo(
-                key: ValueKey('wajub-operator-logo-${choice.id}'),
-                url: logo,
-                width: size,
-                height: size,
-                fallback: _badge(),
-              ),
-      ),
+      child: SizedBox.square(dimension: size, child: logo ?? _badge()),
     );
   }
 

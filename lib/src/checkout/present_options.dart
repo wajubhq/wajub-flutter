@@ -10,8 +10,7 @@ enum WajubLoader {
   spinner,
 }
 
-/// How the Mobile Money form starts (Wajub.js `fields.country` and
-/// `fields.operator`).
+/// How the Mobile Money form starts.
 class MobileMoneyOptions {
   const MobileMoneyOptions({this.country, this.countryLocked = false, this.operatorMode = OperatorMode.choose});
 
@@ -32,24 +31,11 @@ enum OperatorMode {
   detect,
 }
 
-/// Overrides the session's realtime settings: a self-hosted Reverb or Soketi
-/// behind another hostname, or no realtime at all.
-class RealtimeOptions {
-  const RealtimeOptions({this.enabled = true, this.host, this.port, this.tls});
-
-  /// `false`: follow the payment by polling only.
-  final bool enabled;
-  final String? host;
-  final int? port;
-  final bool? tls;
-}
-
 /// Your app's own use of `flutter_stripe`, next to the sheet's.
 ///
-/// The sheet's Stripe card form sets the global `Stripe.publishableKey` to
-/// the merchant's key from Wajub. When your app also takes Stripe payments
-/// with its own key, give it here: the sheet puts it back (and applies
-/// Stripe's settings again) when it closes after using its card form.
+/// When your app also takes Stripe payments with its own key, give it here:
+/// the sheet puts it back when it closes, so your own Stripe payments keep
+/// working.
 class StripeOptions {
   const StripeOptions({this.appPublishableKey});
 
@@ -57,7 +43,7 @@ class StripeOptions {
   final String? appPublishableKey;
 }
 
-/// Everything `presentWajubCheckout` takes (spec types.ts `PresentOptions`).
+/// Everything `presentWajubCheckout` takes.
 class PresentOptions {
   const PresentOptions({
     required this.sessionToken,
@@ -67,7 +53,6 @@ class PresentOptions {
     this.readyTimeout = const Duration(milliseconds: 15000),
     this.returnUrl,
     this.mobileMoney = const MobileMoneyOptions(),
-    this.realtime = const RealtimeOptions(),
     this.cancelOnDismiss = true,
     this.autoCloseSuccess = const Duration(seconds: 3),
     this.stripe = const StripeOptions(),
@@ -80,7 +65,7 @@ class PresentOptions {
   /// `fr` or `en`; else the payment's language, else the device's.
   final String? locale;
 
-  /// Wajub.js's appearance object; the merchant's branding fills the rest.
+  /// The sheet's look; the merchant's branding fills the rest.
   final Appearance? appearance;
   final WajubLoader loader;
 
@@ -88,15 +73,13 @@ class PresentOptions {
   /// and offers Retry. [Duration.zero] waits forever.
   final Duration readyTimeout;
 
-  /// An `https` universal or app link back into your app, sent to the
-  /// payment pages that open in the browser. Without it the payer comes back
-  /// by hand.
+  /// An `https` universal link or App Link back into your app, for the pages
+  /// that open in the browser. Without it the payer comes back by hand.
   final String? returnUrl;
   final MobileMoneyOptions mobileMoney;
-  final RealtimeOptions realtime;
 
-  /// A dismiss before any payment cancels it on Wajub (`POST /pay/cancel`).
-  /// `false` leaves it open, so you can present it again.
+  /// Closing the sheet before any payment cancels the payment. `false`
+  /// leaves it open, so you can present it again.
   final bool cancelOnDismiss;
 
   /// How long the success screen stays before the sheet closes itself.

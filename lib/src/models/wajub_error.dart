@@ -1,7 +1,10 @@
+import 'package:meta/meta.dart';
+
 import '../errors/error_catalogue.dart';
 import 'json_read.dart';
 import 'models.dart';
 
+/// The kind of a [WajubError].
 enum WajubErrorType {
   apiError,
   authenticationError,
@@ -9,7 +12,7 @@ enum WajubErrorType {
   paymentError,
   rateLimitError;
 
-  /// Wajub.js's name: `api_error`, `authentication_error`…
+  /// The type's name: `api_error`, `authentication_error`…
   String get wireName => switch (this) {
         apiError => 'api_error',
         authenticationError => 'authentication_error',
@@ -19,9 +22,8 @@ enum WajubErrorType {
       };
 }
 
-/// Every failure the SDK reports, with Wajub.js's fields plus the mobile ones
-/// (spec errors.md §1). [message] is for the payer, in the sheet's language;
-/// the API's own English text is [apiMessage].
+/// Every failure the SDK reports. [message] is for the payer, in the sheet's
+/// language; branch on [code].
 class WajubError implements Exception {
   const WajubError({
     required this.type,
@@ -37,42 +39,47 @@ class WajubError implements Exception {
     this.blockReference,
     this.apiMessage,
     this.attemptsRemaining,
+    this.cancelRefusal = false,
   });
 
   final WajubErrorType type;
   final String message;
 
-  /// A code of the catalogue (`insufficient_funds`, `session_not_found`…), or
-  /// the API's own code passed through.
+  /// The code to branch on: `insufficient_funds`, `session_not_found`…
   final String code;
 
-  /// On a decline (402): the API's `error_code`.
+  /// On a decline, the reason's code.
   final String? declineCode;
   final bool retryable;
 
-  /// The field at fault (`data.phone`) when the refusal names exactly one.
+  /// The field at fault, when the refusal names exactly one.
   final String? param;
 
-  /// The response's `X-Request-Id`: quote it to Wajub's support.
+  /// The request id to quote to Wajub support.
   final String? correlationId;
 
-  /// 429: how long to wait before trying again.
+  /// On `rate_limited`, how long to wait before trying again.
   final int? retryAfterSeconds;
 
-  /// Field → first message, from the API's `errors`. Empty when none.
+  /// Each field at fault, with its message. Empty when none.
   final Map<String, String> details;
   final int? httpStatus;
 
-  /// 403 `shield_blocked`: the reference to quote to the merchant.
+  /// On `shield_blocked`, the reference to quote to Wajub support.
   final String? blockReference;
 
-  /// The API's own (English) message, for logs.
+  /// Wajub's own message, in English, for your logs.
   final String? apiMessage;
 
   /// A confirmation step refused: the attempts the payer has left.
   final int? attemptsRemaining;
 
-  /// Wajub.js's `name`.
+  /// The answer to a cancel: `payment_in_progress` then means the payment
+  /// cannot be cancelled while it is being paid.
+  @internal
+  final bool cancelRefusal;
+
+  /// Always `WajubError`.
   String get name => 'WajubError';
 
   factory WajubError.network(String message) => WajubError(
@@ -118,9 +125,7 @@ class WajubError implements Exception {
     );
   }
 
-  /// An API error answer (spec errors.md §2). [loading]: a 403 without a
-  /// code reads `session_not_found` while the sheet loads or watches,
-  /// `merchant_restricted` during a payment.
+  /// The error of one of Wajub's error answers, as the SDK reads it.
   factory WajubError.fromResponse({
     required int status,
     required Map<String, dynamic> body,
@@ -128,6 +133,7 @@ class WajubError implements Exception {
     int? retryAfterHeader,
     String language = 'en',
     bool loading = false,
+    bool cancelling = false,
   }) {
     final nested = readMap(body['error']);
     var code = readText(body['error_code']) ??
@@ -160,12 +166,12 @@ class WajubError implements Exception {
       blockReference: readText(body['block_reference']),
       apiMessage: readText(nested?['message']) ?? readText(body['message']),
       attemptsRemaining: readInt(body['attempts_remaining']),
+      cancelRefusal: cancelling,
     );
     return error.localized(language);
   }
 
-  /// A confirmation step refused with HTTP 200 (`{status: "failed",
-  /// attempts_remaining, error: {code, message}}`): mapped from its code.
+  /// The error of a confirmation step `WajubSession.verifyStep` refused.
   factory WajubError.fromStep(StepVerifyResult result, {String language = 'en'}) => WajubError.of(
         result.errorCode ?? 'validation_error',
         language: language,
@@ -173,9 +179,7 @@ class WajubError implements Exception {
         apiMessage: result.errorMessage,
       );
 
-  /// The 1.5 mapping, kept as it was: an HTTP answer whose [code] and
-  /// [message] are already known. The sheet and [WajubSession] use
-  /// [WajubError.fromResponse] (the spec's errors.md §2).
+  /// An error from an HTTP status, [code] and [message] already known.
   factory WajubError.fromHttp(
     int status,
     String message,
@@ -210,11 +214,10 @@ class WajubError implements Exception {
     );
   }
 
-  /// The same error with its [message] in [language] (`fr` or `en`): the
-  /// catalogue's text when it knows [code]; otherwise, in English, the API's
-  /// own message, and in French the catalogue's text for the HTTP status.
+  /// The same error with its [message] in [language] (`fr` or `en`).
   WajubError localized(String language) {
-    final entry = ErrorCatalogue.lookup(code) ?? (httpStatus == 402 ? ErrorCatalogue.declineFallback : null);
+    final entry = ErrorCatalogue.entryFor(code, cancelling: cancelRefusal) ??
+        (httpStatus == 402 ? ErrorCatalogue.declineFallback : null);
     final String text;
     if (code == 'validation_error' && language != 'fr' && apiMessage != null) {
       text = apiMessage!;
@@ -251,9 +254,11 @@ class WajubError implements Exception {
         blockReference: blockReference,
         apiMessage: apiMessage,
         attemptsRemaining: attemptsRemaining,
+        cancelRefusal: cancelRefusal,
       );
 
-  /// Wajub.js's shape (errors.md §1).
+  /// The error as a JSON map (`name`, `type`, `code`, `message`…), for your
+  /// logs.
   Map<String, Object?> toMap() => {
         'name': name,
         'type': type.wireName,

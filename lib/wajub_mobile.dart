@@ -10,6 +10,7 @@ export 'src/checkout/present_options.dart';
 export 'src/client/pay_client.dart' show PayClient;
 export 'src/constants.dart';
 export 'src/models/models.dart';
+export 'src/models/payer_otp.dart' show PayerOtpInstructions, PayerOtpStep;
 export 'src/models/payment_result.dart';
 export 'src/models/realtime_event.dart';
 export 'src/models/wajub_error.dart';

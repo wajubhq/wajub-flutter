@@ -6,12 +6,12 @@ import 'dart:math';
 import 'package:clock/clock.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:wajub_mobile/src/models/security_challenge.dart';
 import 'package:wajub_mobile/src/checkout/checkout_controller.dart';
 import 'package:wajub_mobile/src/checkout/present_options.dart';
 import 'package:wajub_mobile/src/client/client_info.dart';
 import 'package:wajub_mobile/src/client/pay_client.dart';
 import 'package:wajub_mobile/src/mobile_money/mobile_money_data.dart';
-import 'package:wajub_mobile/src/models/models.dart';
 import 'package:wajub_mobile/src/realtime/pusher_socket.dart';
 import 'package:wajub_mobile/src/wajub_session.dart';
 
@@ -166,7 +166,7 @@ CheckoutController checkoutController(
   bool browserOpens = true,
   FakeRealtime? realtime,
   String deviceLanguage = 'en',
-  Future<int?> Function(AltchaChallenge challenge)? altchaSolver,
+  Future<int?> Function(SecurityChallenge challenge)? altchaSolver,
   Future<String> Function(String publishableKey, String? cardholderName)? stripePaymentMethod,
   Future<void> Function(String appPublishableKey)? restoreStripeKey,
 }) =>
